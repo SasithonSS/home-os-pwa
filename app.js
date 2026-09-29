@@ -45,14 +45,16 @@ const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&am
 const baht = n => n == null || isNaN(n) ? "–" : Number(n).toLocaleString("th-TH", { maximumFractionDigits: 2 });
 const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
 const MON = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
-const thDate = s => { if (!s) return ""; const [, m, d] = s.split("-").map(Number); return d + " " + MON[m - 1]; };
-const relDate = s => { if (!s) return ""; const t = today(); if (s === t) return "วันนี้"; const y = new Date(Date.parse(t) - 864e5).toISOString().slice(0, 10); return s === y ? "เมื่อวาน" : thDate(s); };
+const isDay = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
+const thDate = s => { if (!isDay(s)) return String(s || ""); const [, m, d] = s.split("-").map(Number); return d + " " + MON[m - 1]; };
+const relDate = s => { if (!isDay(s)) return String(s || ""); const t = today(); if (s === t) return "วันนี้"; const y = new Date(Date.parse(t) - 864e5).toISOString().slice(0, 10); return s === y ? "เมื่อวาน" : thDate(s); };
 const daysTo = s => s ? Math.round((Date.parse(s) - Date.parse(today())) / 864e5) : null;
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const num = v => { const t = String(v == null ? "" : v).replace(/,/g, "").trim(); const n = Number(t); return t === "" || isNaN(n) ? null : n; };
 
 let cfg = LS.get("cfg", null);            // {url, key, me}
-let S = LS.get("state", null);            // last state from the Sheet, shown offline too
+let base = LS.get("state", null);         // last state from the Sheet, shown offline too
+let S = null;                             // base + the entries still on their way, what the screens show
 const ui = Object.assign({ view: "money", pocket: {}, zone: "" }, LS.get("ui", {}));
 const saveUi = () => LS.set("ui", ui);
 const me = () => (cfg && cfg.me) || "ตัง";
@@ -66,12 +68,30 @@ async function api(body) {
   if (!j.ok) throw Object.assign(new Error(j.error || "ผิดพลาด"), { server: true });
   return j;
 }
-function gotState(j) { S = j; LS.set("state", j); render(); }
+function gotState(j) { base = j; LS.set("state", j); refresh(); }
+function refresh() { S = base && queue().reduce(applyEntry, JSON.parse(JSON.stringify(base))); render(); }
+
+// what an entry does to the numbers, so the screen is right before the Sheet has it (the Sheet's formulas stay the truth)
+function applyEntry(st, e) {
+  const d = e.date || today();
+  if (e.kind === "tx") {
+    const p = st.pockets.find(x => x.name === e.pocket);
+    if (p && e.type === "จ่าย") { p.left -= e.amount; p.used = (p.used || 0) + e.amount; }
+    if (p && e.type === "เติม") p.left += e.amount;
+    st.recent.tx.unshift({ date: d, who: e.who, type: e.type, pocket: e.pocket, amount: e.amount, note: e.note, card: e.card, debt: e.debt, pending: true });
+  } else {
+    const s = e.part === "ของใช้" && st.supplies.find(x => x.name === e.name);
+    if (s) s.left = e.act === "นับ" ? e.qty : (s.left || 0) + (e.act === "ซื้อ" ? e.qty : -e.qty);
+    if (e.part === "BTS" && st.bts) st.bts.left = e.act === "ซื้อแพ็ก" ? e.qty : (st.bts.left || 0) - e.qty;
+    st.recent.log.unshift({ date: d, part: e.part, name: e.name, act: e.act, qty: e.qty, price: e.price, pending: true });
+  }
+  return st;
+}
 let loading = false;
 async function load() {
   if (!cfg || loading) return;
   loading = true; setBusy(true);
-  try { gotState(await api()); await flushQueue(); }
+  try { gotState(await api()); flushQueue(); }
   catch (e) { toast(e.server ? e.message : "ออฟไลน์ · แสดงข้อมูลล่าสุดที่มี", true); }
   loading = false; setBusy(false);
 }
@@ -79,26 +99,31 @@ function setBusy(on) { const a = document.querySelector(".hdr .avatar"); if (a) 
 
 // entries that could not be sent (no signal) wait here; the server drops repeats by id
 const queue = () => LS.get("queue", []);
-function setQueue(q) { LS.set("queue", q); const el = $("queue"); if (el) { el.textContent = "รอส่ง " + q.length; el.classList.toggle("hidden", !q.length); } }
-async function flushQueue() {
-  let q = queue();
-  while (q.length) {
-    try { gotState(await api(q[0])); }
-    catch (e) {
-      if (!e.server) break;                     // still offline: keep the rest
-      toast("ส่งรายการค้างไม่ได้: " + e.message, true);
-    }
-    q = q.slice(1); setQueue(q);
-  }
+let flushing = false, offline = false;
+function setQueue(q) {
+  LS.set("queue", q);
+  const el = $("queue"); if (el) { el.textContent = (offline ? "รอส่ง " : "กำลังส่ง ") + q.length; el.classList.toggle("hidden", !q.length); }
 }
-async function send(entry, btn) {
+async function flushQueue() {
+  if (flushing || !cfg) return;
+  flushing = true;
+  let sent = false, q = queue();
+  while (q.length) {
+    try { await api(q[0]); offline = false; sent = true; }
+    catch (e) {
+      if (!e.server) { offline = true; break; }  // no signal: keep the rest for later
+      toast("บันทึกไม่ได้: " + e.message, true);
+    }
+    q = queue().slice(1); setQueue(q);
+  }
+  flushing = false; setQueue(queue());
+  if (sent && !q.length) setTimeout(load, 2500);   // the Sheet's own numbers, once its formulas have the rows
+}
+function send(entry) {
   entry.id = uid();
-  btn.disabled = true; const label = btn.textContent; btn.textContent = "กำลังบันทึก…";
-  try { gotState(await api(entry)); closeSheet(); toast("บันทึกแล้ว"); }
-  catch (e) {
-    if (e.server) { toast(e.message, true); }
-    else { setQueue(queue().concat([entry])); closeSheet(); toast("ไม่มีสัญญาณ · เก็บไว้ส่งทีหลัง"); }
-  } finally { btn.disabled = false; btn.textContent = label; }
+  setQueue(queue().concat([entry])); refresh(); closeSheet();
+  toast("บันทึกแล้ว");
+  flushQueue();
 }
 
 let toastT;
@@ -147,8 +172,8 @@ function moneyView() {
     const sign = r.type === "จ่าย" ? "−" : r.type === "เติม" ? "+" : "";
     const cls = r.type === "เติม" ? "pos" : "";
     return `<div class="row">${ico(n, tone)}<div class="main"><div>${esc(r.note || r.debt || r.pocket)}</div>
-      <div class="sub">${esc([r.who, r.pocket, relDate(r.date)].filter(Boolean).join(" · "))}</div></div>
-      <div class="amt ${cls}">${sign}${baht(r.amount)}${r.type === "หนี้" ? "<small>ปรับหนี้</small>" : ""}</div></div>`;
+      <div class="sub">${esc([r.who, r.pocket, relDate(r.date), r.card].filter(Boolean).join(" · "))}</div></div>
+      <div class="amt ${cls}">${sign}${baht(r.amount)}${r.pending ? "<small>กำลังส่ง</small>" : r.type === "หนี้" ? "<small>ปรับหนี้</small>" : ""}</div></div>`;
   }).join("") || `<div class="empty">ยังไม่มีรายการ</div>`;
   return header("เงิน") + mainCard + `<div class="jars">${jars.map(jar).join("")}</div>`
     + `<div class="card"><h2>${ico("receipt", "money")}รายการล่าสุด</h2>${rows}</div>`;
@@ -239,15 +264,18 @@ function bindMore(sh) {
   const upd = () => { sum.textContent = who.value + " · " + (date.value === today() ? "วันนี้" : thDate(date.value)); };
   f.onclick = () => { const open = body.classList.toggle("hidden"); f.setAttribute("aria-expanded", String(!open)); };
   who.onchange = upd; date.onchange = upd; upd();
-  return () => ({ who: who.value, date: date.value && date.value !== today() ? date.value : "" });
+  return () => ({ who: who.value, date: date.value || today() });
 }
 
+const PAY_ICON = { "โอน": "repeat", "เงินสด": "wallet", "บัตร": "card" };
 const TYPE_LOOK = { "จ่าย": ["receipt", "money"], "เติม": ["arrowUp", "money"], "หนี้": ["card", "money"] };
 function moneySheet(type, pocket) {
   type = type || "จ่าย";
   const key = t => me() + ":" + t;
   let cur = pocket || ui.pocket[key(type)] || "";
   let minus = false;
+  const payWith = S.payWith || ["โอน", "เงินสด"], last = (ui.pay || {})[me()] || payWith[0];
+  let payCur = payWith.indexOf(last) >= 0 ? last : "บัตร", cardCur = payCur === "บัตร" ? last : "";
   const pocketChips = () => S.pockets.filter(p => !hidden(p.name) || p.name === cur).map(p => { const [n, tone] = pocketIco(p.name);
     return `<button type="button" class="chip" data-v="${esc(p.name)}" aria-pressed="${p.name === cur}">${ico(n, tone)}${esc(p.name)}<small>${baht(p.left)}</small></button>`; }).join("");
   openSheet(`${sheetHead(TYPE_LOOK[type][0], TYPE_LOOK[type][1], type, "")}
@@ -257,9 +285,11 @@ function moneySheet(type, pocket) {
       <input data-f="amount" inputmode="decimal" placeholder="0" autocomplete="off"></div>
     <div class="lbl">กระเป๋า</div><div class="chips" data-f="pocket">${pocketChips()}</div>
     <div class="lbl">รายละเอียด</div><input class="fld" data-f="note" placeholder="เช่น กาแฟ ข้าวเที่ยง" autocomplete="off">
+    <div data-show="จ่าย"><div class="lbl">จ่ายด้วย</div><div class="chips" data-f="pay">${payWith.concat("บัตร").map(v =>
+      `<button type="button" class="chip" data-v="${esc(v)}" aria-pressed="${v === payCur}">${ico(PAY_ICON[v] || "card", "money")}${esc(v)}</button>`).join("")}</div>
+      <select class="fld${payCur === "บัตร" ? "" : " hidden"}" data-f="card" style="margin-top:8px">${opts(S.cards, cardCur, "— เลือกบัตร —")}</select></div>
     <div data-show="หนี้"><div class="lbl">หนี้</div><select class="fld" data-f="debt1">${opts(S.debts, "", "— เลือกหนี้ —")}</select></div>
-    ${moreHtml(`<div data-show="จ่าย"><div class="lbl">บัตร</div><select class="fld" data-f="card">${opts(S.cards, "", "— ไม่ระบุ —")}</select></div>
-      <div data-show="เติม"><div class="lbl">ที่มา</div><select class="fld" data-f="source">${opts(S.sources, "", "— ไม่ระบุ —")}</select></div>
+    ${moreHtml(`<div data-show="เติม"><div class="lbl">ที่มา</div><select class="fld" data-f="source">${opts(S.sources, "", "— ไม่ระบุ —")}</select></div>
       <div data-show="เติม จ่าย"><div class="lbl">งวดหนี้ (ถ้ามี)</div><select class="fld" data-f="debt2">${opts(S.debts, "", "— ไม่ใช่งวดหนี้ —")}</select></div>`, me())}
     <button class="btn big" data-f="save">บันทึก</button>`, sh => {
     const f = n => sh.querySelector(`[data-f="${n}"]`);
@@ -274,6 +304,9 @@ function moneySheet(type, pocket) {
     bindSeg(f("type"), v => { type = v; if (!pocket) { cur = ui.pocket[key(type)] || cur; f("pocket").innerHTML = pocketChips(); } show(); });
     f("pocket").onclick = e => { const b = e.target.closest("button"); if (!b) return; cur = b.dataset.v;
       f("pocket").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(x === b))); sub(); };
+    f("pay").onclick = e => { const b = e.target.closest("button"); if (!b) return; payCur = b.dataset.v;
+      f("pay").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+      f("card").classList.toggle("hidden", payCur !== "บัตร"); };
     sign.onclick = () => { minus = !minus; sign.textContent = minus ? "−" : "+"; sign.classList.toggle("minus", minus); };
     const more = bindMore(sh);
     show();
@@ -285,10 +318,12 @@ function moneySheet(type, pocket) {
       const debt = type === "หนี้" ? f("debt1").value : f("debt2").value;
       if (type === "หนี้" && !debt) return toast("เลือกหนี้", true);
       if (type === "หนี้" && minus) amount = -amount;
-      ui.pocket[key(type)] = cur; saveUi();
+      const card = type !== "จ่าย" ? "" : payCur === "บัตร" ? f("card").value : payCur;
+      if (type === "จ่าย" && !card) return toast("เลือกบัตร", true);
+      ui.pocket[key(type)] = cur; if (type === "จ่าย") { ui.pay = ui.pay || {}; ui.pay[me()] = card; } saveUi();
       const m = more();
       send({ kind: "tx", type, pocket: cur, amount, note: f("note").value.trim(), who: m.who, date: m.date,
-        card: type === "จ่าย" ? f("card").value : "", source: type === "เติม" ? f("source").value : "", debt }, f("save"));
+        card, source: type === "เติม" ? f("source").value : "", debt });
     };
   });
 }
@@ -319,7 +354,7 @@ function itemSheet(name, act) {
       const qty = num(f("qty").value);
       if (qty == null || qty < 0 || (act !== "นับ" && qty === 0)) return toast("ใส่จำนวน", true);
       const m = more(), price = act === "ซื้อ" ? num(f("price").value) : null;
-      send({ kind: "log", part: "ของใช้", act, name: s.name, qty, price: price == null ? "" : price, who: m.who, date: m.date }, f("save"));
+      send({ kind: "log", part: "ของใช้", act, name: s.name, qty, price: price == null ? "" : price, who: m.who, date: m.date });
     };
   });
 }
@@ -360,7 +395,7 @@ function btsSheet(bact) {
       const qty = bact === "ซื้อแพ็ก" ? pack : num(f("qty").value);
       if (!qty || qty < 0) return toast("ใส่จำนวนเที่ยว", true);
       const m = more(), price = bact === "ซื้อแพ็ก" ? num(f("price").value) : null;
-      send({ kind: "log", part: "BTS", act: bact, name: "", qty, price: price == null ? "" : price, who: m.who, date: m.date }, f("save"));
+      send({ kind: "log", part: "BTS", act: bact, name: "", qty, price: price == null ? "" : price, who: m.who, date: m.date });
     };
   });
 }
@@ -404,5 +439,5 @@ window.addEventListener("online", flushQueue);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") load(); });
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
 if (ui.view !== "money" && ui.view !== "home") ui.view = "money";
-render();
+refresh();
 load();
