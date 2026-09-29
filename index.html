@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Home OS จด</title>
+<meta name="theme-color" content="#ACDDD3">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Home OS จด">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header>
+  <h1>Home OS จด</h1>
+  <span id="queue" class="pill hidden"></span>
+  <button id="refresh" class="icon" aria-label="โหลดใหม่">↻</button>
+</header>
+
+<main>
+  <!-- ตั้งค่า -->
+  <section id="v-setup" class="view hidden">
+    <h2>ตั้งค่าครั้งแรก</h2>
+    <label>ลิงก์ Web app (…/exec)<input id="s-url" type="url" autocomplete="off" placeholder="https://script.google.com/macros/s/…/exec"></label>
+    <label>รหัส<input id="s-key" type="text" autocomplete="off" autocapitalize="off"></label>
+    <div class="label">ฉันคือ</div>
+    <div class="chips" id="s-me"></div>
+    <button id="s-save" class="primary">บันทึก</button>
+    <p class="hint">ลิงก์กับรหัส: เมนู Home OS › รหัสแอปมือถือ ใน Google Sheet</p>
+  </section>
+
+  <!-- เงิน -->
+  <section id="v-money" class="view hidden">
+    <div class="seg" id="m-type"></div>
+    <div class="label">กระเป๋า</div>
+    <div class="chips" id="m-pocket"></div>
+    <label>จำนวน (บาท)<input id="m-amount" type="text" inputmode="decimal" placeholder="0"></label>
+    <label>รายละเอียด<input id="m-note" type="text" placeholder="เช่น กาแฟ"></label>
+    <label data-for="จ่าย">บัตร<select id="m-card"></select></label>
+    <label data-for="เติม">ที่มา<select id="m-source"></select></label>
+    <label data-for="เติม จ่าย หนี้">หนี้ (เฉพาะงวดหนี้)<select id="m-debt"></select></label>
+    <div class="row">
+      <label>ใคร<select id="m-who"></select></label>
+      <label>วันที่<input id="m-date" type="date"></label>
+    </div>
+    <button id="m-send" class="primary">บันทึก</button>
+  </section>
+
+  <!-- ของใช้ / BTS -->
+  <section id="v-log" class="view hidden">
+    <div class="seg" id="l-part"></div>
+    <div id="l-supply">
+      <div class="seg small" id="l-act"></div>
+      <label>ชื่อของ<select id="l-name"></select></label>
+      <p class="hint" id="l-left"></p>
+    </div>
+    <div id="l-bts" class="hidden">
+      <div class="card" id="bts-card"></div>
+      <div class="seg small" id="l-bact"></div>
+      <div class="chips hidden" id="l-pack"></div>
+    </div>
+    <div class="row">
+      <label id="l-qty-l"><span>จำนวน</span><input id="l-qty" type="text" inputmode="decimal"></label>
+      <label id="l-price-l">ราคา (บาท)<input id="l-price" type="text" inputmode="decimal"></label>
+    </div>
+    <div class="row">
+      <label>ใคร<select id="l-who"></select></label>
+      <label>วันที่<input id="l-date" type="date"></label>
+    </div>
+    <button id="l-send" class="primary">บันทึก</button>
+  </section>
+
+  <!-- ยอด -->
+  <section id="v-bal" class="view hidden">
+    <div id="b-pockets"></div>
+    <h3>ของใกล้หมด</h3>
+    <ul id="b-low" class="list"></ul>
+    <h3>รายการล่าสุด</h3>
+    <ul id="b-tx" class="list"></ul>
+    <h3>บันทึกล่าสุด</h3>
+    <ul id="b-log" class="list"></ul>
+    <p class="hint"><button id="b-setup" class="link">ตั้งค่า</button></p>
+  </section>
+</main>
+
+<div id="toast" class="toast hidden"></div>
+
+<nav>
+  <button data-view="money" class="on"><span>฿</span>เงิน</button>
+  <button data-view="log"><span>🧻</span>ของใช้/BTS</button>
+  <button data-view="bal"><span>≡</span>ยอด</button>
+</nav>
+
+<script src="app.js"></script>
+</body>
+</html>
