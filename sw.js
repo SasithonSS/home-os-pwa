@@ -1,6 +1,6 @@
-// Home OS จด: cache the page itself so it opens without signal. Calls to script.google.com are never cached.
-const CACHE = "homeos-pwa-v8"; // bump on every deploy · v8: sheets full screen, drag down to close
-const SHELL = ["./", "index.html", "app.js", "app.css", "manifest.webmanifest", "icon-180.png", "icon-192.png", "logo-login.png"];
+// Home OS จด: cache the page itself so it opens without signal. Calls to Supabase are never cached.
+const CACHE = "homeos-pwa-v9"; // bump on every deploy · v9: data in Supabase, sign in per person
+const SHELL = ["./", "index.html", "app.js", "app.css", "manifest.webmanifest", "icon-180.png", "icon-192.png", "logo-login.png", "vendor/supabase.js"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: "reload" }))))); self.skipWaiting(); });
 self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k))))); self.clients.claim(); });
 self.addEventListener("fetch", e => {

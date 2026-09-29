@@ -1,8 +1,8 @@
 # Home OS จด
 
-หน้าเว็บจดเงิน / ของใช้ / BTS ลง Google Sheet "Home OS" (ติดตั้งเป็นแอปบน iPhone)
-ไม่มีข้อมูลบ้านในโค้ด: ตัวเลือกและยอดดึงจาก Sheet ผ่าน Apps Script web app ต้องมีลิงก์ + รหัสถึงจะใช้ได้
+หน้าเว็บจดเงิน / ของใช้ / BTS ของบ้าน (ติดตั้งเป็นแอปบน iPhone) ข้อมูลอยู่ใน Supabase
+ยอดและรายการไม่อยู่ในโค้ด: ต้องเข้าสู่ระบบด้วยบัญชีของบ้าน (ตัง / แนน) ถึงจะเห็นอะไร
 
-ติดตั้ง: Safari → เปิดหน้านี้ → Share → Add to Home Screen → เปิดจากไอคอน → ใส่ลิงก์ Web app + รหัส (Sheet เมนู Home OS › รหัสแอปมือถือ)
+ติดตั้ง: Safari → เปิดหน้านี้ → Share → Add to Home Screen → เปิดจากไอคอน → เข้าสู่ระบบด้วยอีเมล + รหัสผ่าน
 
-Source: `pwa/` ใน repo home-os (private) · ฝั่ง Sheet: `export/apps_script/Web.gs`
+Source: `pwa/` ใน repo home-os (private) · ฐานข้อมูล: `supabase/` (schema, ย้ายข้อมูลจาก Sheet, วิธีตั้งค่า)

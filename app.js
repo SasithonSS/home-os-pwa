@@ -1,5 +1,5 @@
-// Home OS จด: a thin phone front for the Home OS Google Sheet, in the Home OS app's look (web/src).
-// Reads and writes through the Apps Script web app (export/apps_script/Web.gs); every entry is typed in a bottom sheet.
+// Home OS จด: the household's phone app for money, supplies and BTS, in the Home OS app's look (web/src).
+// Data lives in Supabase (supabase/schema.sql): tables to write, views that do the sums; every entry is typed in a bottom sheet.
 "use strict";
 const $ = id => document.getElementById(id);
 const LS = {
@@ -49,41 +49,69 @@ const isDay = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
 const thDate = s => { if (!isDay(s)) return String(s || ""); const [, m, d] = s.split("-").map(Number); return d + " " + MON[m - 1]; };
 const relDate = s => { if (!isDay(s)) return String(s || ""); const t = today(); if (s === t) return "วันนี้"; const y = new Date(Date.parse(t) - 864e5).toISOString().slice(0, 10); return s === y ? "เมื่อวาน" : thDate(s); };
 const daysTo = s => s ? Math.round((Date.parse(s) - Date.parse(today())) / 864e5) : null;
-const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const num = v => { const t = String(v == null ? "" : v).replace(/,/g, "").trim(); const n = Number(t); return t === "" || isNaN(n) ? null : n; };
 
-let cfg = LS.get("cfg", null);            // {url, key, me}
-let base = LS.get("state", null);         // last state from the Sheet, shown offline too
+// ---------- Supabase ----------
+// The anon key is meant to be public: row level security in supabase/schema.sql decides what a signed-in person gets.
+const SUPABASE_URL = "https://rulctyhxdzwcvclmliva.supabase.co", SUPABASE_KEY = "sb_publishable_mKyUHs999gqzWWJEjYr4BA_pnBe_KY1";
+// no answer in 20 s counts as no signal, so the entry waits in the queue and goes again
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { global: { fetch: (u, o) => {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 20000);
+  return fetch(u, Object.assign({}, o, { signal: ctl.signal })).finally(() => clearTimeout(t));
+} } });
+// the choices that were in the Sheet's CONFIG (export/apps_script/Code.gs, Web.gs)
+const CHOICES = { people: ["ตัง", "แนน"], txTypes: ["จ่าย", "เติม", "หนี้"], payWith: ["โอน", "เงินสด"], packs: [35, 25],
+  sources: ["เงินเดือนตัง", "เงินเดือนแนน", "Main", "รายรับอื่น", "เบิกบริษัท", "ปรับเงินสด"] };
+
+// before Supabase the app kept a Sheet link here: entries still waiting get ids the tables take, deletes by row are dropped
+if (LS.get("cfg", null)) {
+  LS.set("queue", LS.get("queue", []).filter(e => e.kind !== "del").map(e => Object.assign(e, { id: crypto.randomUUID() })));
+  ["cfg", "state"].forEach(k => localStorage.removeItem("hos." + k));
+}
+let who = LS.get("me", "");               // the signed-in person's name, from profiles
+let base = LS.get("state", null);         // last state from Supabase, shown offline too
 let S = null;                             // base + the entries still on their way, what the screens show
 const ui = Object.assign({ view: "money", pocket: {}, zone: "" }, LS.get("ui", {}));
 const saveUi = () => LS.set("ui", ui);
-const me = () => (cfg && cfg.me) || "ตัง";
+const me = () => who || "ตัง";
 
-// ---------- network ----------
-// Google sometimes takes a minute or never answers: give up after a while so the entry is tried again (the server drops repeats by id)
-async function api(body) {
-  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), body ? 40000 : 60000);
-  let r;
-  try {
-    r = body
-      ? await fetch(cfg.url, { method: "POST", body: JSON.stringify(Object.assign({ key: cfg.key }, body)), signal: ctl.signal }) // text/plain: no CORS preflight
-      : await fetch(cfg.url + "?key=" + encodeURIComponent(cfg.key), { cache: "no-store", signal: ctl.signal });
-  } finally { clearTimeout(timer); }
-  const j = await r.json().catch(() => { throw new Error("ติดต่อ Sheet ไม่ได้ (" + r.status + ")"); });
-  if (!j.ok) throw Object.assign(new Error(j.error || "ผิดพลาด"), { server: true });
-  return j;
+// a database error (code) is the entry's fault: say so and drop it; anything else is the network: keep it and try again
+const check = r => { if (r.error) throw Object.assign(new Error(r.error.message || "ผิดพลาด"), { server: !!r.error.code }); return r.data; };
+const toNum = v => v == null ? null : Number(v);
+async function fetchState() {
+  const [pockets, supplies, bts, cards, debts, tx, log] = (await Promise.all([
+    sb.from("pocket_view").select("*").order("sort"),
+    sb.from("supply_view").select("*").order("sort"),
+    sb.from("bts_view").select("*"),
+    sb.from("cards").select("name").order("sort"),
+    sb.from("debts").select("name").order("sort"),
+    sb.from("tx").select("id,ts,date,who,type,pocket,amount,note,card,debt").order("ts", { ascending: false }).limit(15),
+    sb.from("log").select("id,ts,date,who,part,name,act,qty,price").order("ts", { ascending: false }).limit(10),
+  ])).map(check);
+  const b = bts[0];
+  return Object.assign({}, CHOICES, {
+    pockets: pockets.map(p => ({ name: p.name, owner: p.owner, budget: toNum(p.budget), left: toNum(p.left), used: toNum(p.used), need: toNum(p.need) })),
+    supplies: supplies.map(x => ({ name: x.name, zone: x.zone, owner: x.owner, unit: x.unit, left: toNum(x.left), runout: x.runout || "", buyBy: x.buy_by || "", urgent: x.urgent, low: x.low })),
+    cards: cards.map(x => x.name), debts: debts.map(x => x.name),
+    bts: b ? { bought: b.bought, expires: b.expires, left: toNum(b.left), status: b.status } : {},
+    recent: { tx: tx.map(r => Object.assign(r, { amount: toNum(r.amount) })), log: log.map(r => Object.assign(r, { qty: toNum(r.qty), price: toNum(r.price) })) },
+  });
+}
+async function put(e) {
+  if (e.kind === "del") return check(await sb.from(e.tab).delete().eq("id", e.rid));
+  const row = e.kind === "tx"
+    ? { id: e.id, date: e.date, who: e.who, type: e.type, pocket: e.pocket, amount: e.amount, note: e.note || "", card: e.card || "", source: e.source || "", debt: e.debt || "" }
+    : { id: e.id, date: e.date, who: e.who, part: e.part, name: e.name || "", act: e.act, qty: e.qty, price: e.price === "" ? null : e.price };
+  check(await sb.from(e.kind).upsert(row, { onConflict: "id", ignoreDuplicates: true }));   // sent twice (no answer the first time): kept once
 }
 function gotState(j) { base = j; LS.set("state", j); refresh(); }
 function refresh() { S = base && queue().reduce(applyEntry, JSON.parse(JSON.stringify(base))); render(); }
 
-// what an entry does to the numbers, so the screen is right before the Sheet has it (the Sheet's formulas stay the truth)
-const sameRow = (r, e) => r.ts === e.ts && (e.tab === "log"
-  ? r.part === e.part && r.act === e.act && (r.name || "") === (e.name || "") && r.qty === e.qty
-  : r.type === e.type && r.pocket === e.pocket && r.amount === e.amount && (r.note || "") === (e.note || ""));
+// what an entry does to the numbers, so the screen is right before the views have it (the views stay the truth)
 function applyEntry(st, e) {
   const d = e.date || today();
   if (e.kind === "del") {
-    const list = st.recent[e.tab], i = list.findIndex(r => sameRow(r, e));
+    const list = st.recent[e.tab], i = list.findIndex(r => r.id === e.rid);
     if (i >= 0) list.splice(i, 1);
     if (e.tab === "tx") {
       const p = st.pockets.find(x => x.name === e.pocket);
@@ -98,26 +126,26 @@ function applyEntry(st, e) {
     const p = st.pockets.find(x => x.name === e.pocket);
     if (p && e.type === "จ่าย") { p.left -= e.amount; p.used = (p.used || 0) + e.amount; }
     if (p && e.type === "เติม") p.left += e.amount;
-    st.recent.tx.unshift({ date: d, who: e.who, type: e.type, pocket: e.pocket, amount: e.amount, note: e.note, card: e.card, debt: e.debt, pending: true });
+    st.recent.tx.unshift({ id: e.id, date: d, who: e.who, type: e.type, pocket: e.pocket, amount: e.amount, note: e.note, card: e.card, debt: e.debt, pending: true });
   } else {
     const s = e.part === "ของใช้" && st.supplies.find(x => x.name === e.name);
     if (s) s.left = e.act === "นับ" ? e.qty : (s.left || 0) + (e.act === "ซื้อ" ? e.qty : -e.qty);
     if (e.part === "BTS" && st.bts) st.bts.left = e.act === "ซื้อแพ็ก" ? e.qty : (st.bts.left || 0) - e.qty;
-    st.recent.log.unshift({ date: d, part: e.part, name: e.name, act: e.act, qty: e.qty, price: e.price, pending: true });
+    st.recent.log.unshift({ id: e.id, date: d, who: e.who, part: e.part, name: e.name, act: e.act, qty: e.qty, price: e.price, pending: true });
   }
   return st;
 }
 let loading = false;
 let loadT = null, loadFails = 0;
 async function load() {
-  if (!cfg || loading) return;
+  if (!who || loading) return;
   clearTimeout(loadT);
   loading = true; setBusy(true);
-  try { gotState(await api()); loadFails = 0; }
+  try { gotState(await fetchState()); loadFails = 0; }
   catch (e) {
     if (e.server) toast(e.message, true);
-    else {                                         // Google dropped it (a 404 or no answer now and then): try again shortly
-      if (++loadFails === 2) toast("ติดต่อ Sheet ไม่ได้ · แสดงข้อมูลล่าสุดที่มี", true);
+    else {                                         // no signal or no answer: try again shortly
+      if (++loadFails === 2) toast("ติดต่อเซิร์ฟเวอร์ไม่ได้ · แสดงข้อมูลล่าสุดที่มี", true);
       loadT = setTimeout(load, Math.min(10000 * loadFails, 60000));
     }
   }
@@ -126,7 +154,7 @@ async function load() {
 }
 function setBusy(on) { const a = document.querySelector(".hdr .avatar"); if (a) a.classList.toggle("spin", on); }
 
-// entries that could not be sent (no signal) wait here; the server drops repeats by id
+// entries that could not be sent (no signal) wait here; the tables drop repeats by id
 const queue = () => LS.get("queue", []);
 let flushing = false, offline = false, retryT = null, retryIn = 20;
 function setQueue(q) {
@@ -134,12 +162,12 @@ function setQueue(q) {
   const el = $("queue"); if (el) { el.textContent = (offline ? "รอส่ง " : "กำลังส่ง ") + q.length; el.classList.toggle("hidden", !q.length); }
 }
 async function flushQueue() {
-  if (flushing || !cfg) return;
+  if (flushing || !who) return;
   clearTimeout(retryT); retryT = null;
   flushing = true; setQueue(queue());
   let sent = false, q = queue();
   while (q.length) {
-    try { await api(q[0]); offline = false; sent = true; retryIn = 20; }
+    try { await put(q[0]); offline = false; sent = true; retryIn = 20; }
     catch (e) {
       if (!e.server) { offline = true; break; }  // no signal or no answer: keep the rest for the next try
       toast("บันทึกไม่ได้: " + e.message, true);
@@ -149,10 +177,10 @@ async function flushQueue() {
   flushing = false; setQueue(queue());
   if (queue().length) {                            // try again by itself: 20 s, then longer, at most every 2 minutes
     retryT = setTimeout(flushQueue, retryIn * 1000); retryIn = Math.min(retryIn * 2, 120);
-  } else if (sent) setTimeout(load, 2500);         // the Sheet's own numbers, once its formulas have the rows
+  } else if (sent) load();                         // the views' own numbers
 }
 function send(entry, msg) {
-  entry.id = uid();
+  entry.id = crypto.randomUUID();
   setQueue(queue().concat([entry])); refresh(); closeSheet();
   toast(msg || "บันทึกแล้ว");
   flushQueue();
@@ -166,7 +194,7 @@ function toast(msg, err) {
 
 // ---------- screens ----------
 function render() {
-  const view = cfg ? ui.view : "setup";
+  const view = who ? ui.view : "setup";
   document.documentElement.dataset.tab = view === "money" ? "money" : view === "home" ? "home" : "";
   $("nav").classList.toggle("hidden", view === "setup");
   document.querySelectorAll("#nav .tab").forEach(b => b.setAttribute("aria-selected", String(b.dataset.view === view)));
@@ -178,9 +206,9 @@ function render() {
 function header(title) {
   const d = new Date().toLocaleDateString("th-TH", { weekday: "long", day: "numeric", month: "long" });
   return `<div class="hdr"><div><h1>${title}</h1><div class="d">${esc(d)}</div></div>
-    <div class="acts"><button id="queue" class="pill hidden" data-act="flush" aria-label="ส่งตอนนี้"></button><button class="avatar${loading ? " spin" : ""}" data-act="setup" aria-label="ตั้งค่า">${esc(me())}</button></div></div>`;
+    <div class="acts"><button id="queue" class="pill hidden" data-act="flush" aria-label="ส่งตอนนี้"></button><button class="avatar${loading ? " spin" : ""}" data-act="account" aria-label="บัญชี">${esc(me())}</button></div></div>`;
 }
-const waiting = () => `<div class="card"><div class="empty">กำลังโหลดจาก Google Sheet…</div></div>`;
+const waiting = () => `<div class="card"><div class="empty">กำลังโหลด…</div></div>`;
 
 function moneyView() {
   if (!S) return header("เงิน") + waiting();
@@ -247,32 +275,60 @@ function homeView() {
     + chips + `<div class="card">${list.map(supplyRow).join("") || `<div class="empty">ไม่มี</div>`}</div>`;
 }
 
+// sign in: the two accounts are made in the Supabase dashboard (sign-up is off)
 function setupView() {
-  const c = cfg || {}, who = c.me || "ตัง";
   return `<div class="login"><div class="box">
     <img class="logo" src="logo-login.png" alt="">
-    <h1>Home OS จด</h1><div class="sub">จดเงินกับของใช้ลง Google Sheet ของบ้าน</div>
-    <div class="who">${["ตัง", "แนน"].map(n => `<button data-who="${n}" aria-pressed="${n === who}"><span class="av">${n.slice(0, 1)}</span>${n}</button>`).join("")}</div>
-    <div class="lbl">ลิงก์ Web app</div><input id="s-url" class="fld" type="url" autocomplete="off" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(c.url || "")}">
-    <div class="lbl">รหัส</div><input id="s-key" class="fld" type="text" autocomplete="off" autocapitalize="off" value="${esc(c.key || "")}">
-    <button id="s-save" class="btn big">เข้าใช้งาน</button>
-    <div class="hint">ลิงก์กับรหัส: Google Sheet เมนู Home OS › รหัสแอปมือถือ</div>
-    ${cfg ? `<button class="link back" data-act="back">กลับ</button>` : ""}
+    <h1>Home OS จด</h1><div class="sub">จดเงินกับของใช้ของบ้าน</div>
+    <div class="lbl">อีเมล</div><input id="s-email" class="fld" type="email" autocomplete="username" autocapitalize="off" value="${esc(LS.get("email", ""))}">
+    <div class="lbl">รหัสผ่าน</div><input id="s-pass" class="fld" type="password" autocomplete="current-password">
+    <button id="s-save" class="btn big">เข้าสู่ระบบ</button>
   </div></div>`;
 }
 function bindSetup() {
-  let who = (cfg && cfg.me) || "ตัง";
-  document.querySelectorAll(".who button").forEach(b => b.onclick = () => {
-    who = b.dataset.who; document.querySelectorAll(".who button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
-  });
-  $("s-save").onclick = () => {
-    const url = $("s-url").value.trim(), key = $("s-key").value.trim();
-    if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(url)) return toast("ลิงก์ต้องขึ้นต้น https://script.google.com และจบด้วย /exec", true);
-    if (!key) return toast("ใส่รหัส", true);
-    const changed = !cfg || cfg.url !== url || cfg.key !== key;
-    cfg = { url, key, me: who }; LS.set("cfg", cfg);
-    render(); if (changed || !S) load();
+  $("s-save").onclick = async () => {
+    const email = $("s-email").value.trim(), password = $("s-pass").value;
+    if (!email || !password) return toast("ใส่อีเมลและรหัสผ่าน", true);
+    $("s-save").disabled = true;
+    try {
+      const r = await sb.auth.signInWithPassword({ email, password });
+      if (r.error) throw new Error(r.error.status === 400 ? "อีเมลหรือรหัสผ่านไม่ถูกต้อง" : r.error.message);
+      const p = check(await sb.from("profiles").select("name").single());
+      who = p.name; LS.set("me", who); LS.set("email", email);
+      render(); load(); listen();
+    } catch (e) { toast(e.message === "Failed to fetch" ? "ไม่มีสัญญาณ ลองใหม่อีกครั้ง" : e.message, true); }
+    const b = $("s-save"); if (b) b.disabled = false;
   };
+}
+function accountSheet() {
+  const q = queue().length;
+  openSheet(`${sheetHead("users", "accent", me(), esc(LS.get("email", "")))}
+    <button class="btn big danger" data-f="out">ออกจากระบบ</button>
+    ${q ? `<div class="hint" style="text-align:center">ยังมี ${q} รายการรอส่ง · ออกจากระบบแล้วรายการเหล่านี้จะหายไป</div>` : ""}`, sh => {
+    const b = sh.querySelector('[data-f="out"]'); let armed = !q;
+    b.onclick = async () => {
+      if (!armed) { armed = true; b.classList.add("armed"); b.textContent = "แตะอีกครั้งเพื่อออกจากระบบ"; return; }
+      await sb.auth.signOut().catch(() => {});
+      signedOut(); closeSheet();
+    };
+  });
+}
+function signedOut() {
+  ["me", "state", "queue"].forEach(k => localStorage.removeItem("hos." + k));
+  sb.removeAllChannels(); listening = null;
+  who = ""; base = null; S = null; render();
+}
+// the session ran out and could not be renewed (password changed, account removed): back to sign in
+sb.auth.onAuthStateChange(ev => { if (ev === "SIGNED_OUT" && who) signedOut(); });
+// the other phone's entries show up as they are written
+let listening = null, relT = null;
+function listen() {
+  if (listening || !who) return;
+  const later = () => { clearTimeout(relT); relT = setTimeout(load, 600); };
+  listening = sb.channel("rows")
+    .on("postgres_changes", { event: "*", schema: "public", table: "tx" }, later)
+    .on("postgres_changes", { event: "*", schema: "public", table: "log" }, later)
+    .subscribe();
 }
 
 // ---------- sheets ----------
@@ -484,12 +540,12 @@ function entrySheet(tab, i) {
   openSheet(`${sheetHead(n, tone, title, esc(relDate(r.date)))}
     <div class="card" style="box-shadow:none">${facts.filter(f => f[1]).map(f => `<div class="row"><div class="main sub">${esc(f[0])}</div><div class="amt">${esc(f[1])}</div></div>`).join("")}</div>
     <button class="btn big danger" data-f="del">${svg("x")}ลบรายการนี้</button>
-    <div class="hint" style="text-align:center">ลบออกจาก Google Sheet ด้วย · ${isTx ? "ยอดกระเป๋าจะคืนตาม" : "ตัวเลขของใช้จะคำนวณใหม่"}</div>`, sh => {
+    <div class="hint" style="text-align:center">${isTx ? "ยอดกระเป๋าจะคืนตาม" : "ตัวเลขของใช้จะคำนวณใหม่"}</div>`, sh => {
     const b = sh.querySelector('[data-f="del"]'); let armed = false;
     b.onclick = () => {
       if (!armed) { armed = true; b.classList.add("armed"); b.lastChild.textContent = "แตะอีกครั้งเพื่อยืนยันลบ"; return; }
-      send(isTx ? { kind: "del", tab, ts: r.ts, type: r.type, pocket: r.pocket, amount: r.amount, note: r.note || "" }
-                : { kind: "del", tab, ts: r.ts, part: r.part, act: r.act, name: r.name || "", qty: r.qty }, "ลบแล้ว");
+      send(isTx ? { kind: "del", tab, rid: r.id, type: r.type, pocket: r.pocket, amount: r.amount }
+                : { kind: "del", tab, rid: r.id, part: r.part, act: r.act, name: r.name || "", qty: r.qty }, "ลบแล้ว");
     };
   });
 }
@@ -511,8 +567,7 @@ function addSheet() {
 document.addEventListener("click", e => {
   const b = e.target.closest("[data-act]"); if (!b) return;
   const a = b.dataset.act;
-  if (a === "setup") { closeSheet(); $("app").innerHTML = setupView(); $("nav").classList.add("hidden"); document.documentElement.dataset.tab = ""; bindSetup(); return; }
-  if (a === "back") return render();
+  if (a === "account") return accountSheet();
   if (a === "flush") { retryIn = 20; toast("กำลังส่งรายการที่ค้าง…"); return flushQueue(); }
   if (!S) return toast("ยังโหลดข้อมูลไม่เสร็จ", true);
   if (a === "pay") moneySheet(b.dataset.type || (b.dataset.pocket === "Main" ? "จ่าย" : ""), b.dataset.pocket);
@@ -537,4 +592,4 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
 if (ui.view !== "money" && ui.view !== "home") ui.view = "money";
 refresh();
-load();
+load(); listen();
