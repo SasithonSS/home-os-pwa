@@ -1,5 +1,5 @@
 // Home OS จด: cache the page itself so it opens without signal. Calls to script.google.com are never cached.
-const CACHE = "homeos-pwa-v5"; // bump on every deploy · v5: instant save, จ่ายด้วย, dates
+const CACHE = "homeos-pwa-v6"; // bump on every deploy · v6: delete an entry
 const SHELL = ["./", "index.html", "app.js", "app.css", "manifest.webmanifest", "icon-180.png", "icon-192.png", "logo-login.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: "reload" }))))); self.skipWaiting(); });
 self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k))))); self.clients.claim(); });

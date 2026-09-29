@@ -72,9 +72,24 @@ function gotState(j) { base = j; LS.set("state", j); refresh(); }
 function refresh() { S = base && queue().reduce(applyEntry, JSON.parse(JSON.stringify(base))); render(); }
 
 // what an entry does to the numbers, so the screen is right before the Sheet has it (the Sheet's formulas stay the truth)
+const sameRow = (r, e) => r.ts === e.ts && (e.tab === "log"
+  ? r.part === e.part && r.act === e.act && (r.name || "") === (e.name || "") && r.qty === e.qty
+  : r.type === e.type && r.pocket === e.pocket && r.amount === e.amount && (r.note || "") === (e.note || ""));
 function applyEntry(st, e) {
   const d = e.date || today();
-  if (e.kind === "tx") {
+  if (e.kind === "del") {
+    const list = st.recent[e.tab], i = list.findIndex(r => sameRow(r, e));
+    if (i >= 0) list.splice(i, 1);
+    if (e.tab === "tx") {
+      const p = st.pockets.find(x => x.name === e.pocket);
+      if (p && e.type === "จ่าย") { p.left += e.amount; p.used = (p.used || 0) - e.amount; }
+      if (p && e.type === "เติม") p.left -= e.amount;
+    } else {
+      const s = e.part === "ของใช้" && st.supplies.find(x => x.name === e.name);
+      if (s && e.act !== "นับ") s.left = (s.left || 0) + (e.act === "ซื้อ" ? -e.qty : e.qty);
+      if (e.part === "BTS" && e.act === "นั่ง" && st.bts) st.bts.left = (st.bts.left || 0) + e.qty;
+    }
+  } else if (e.kind === "tx") {
     const p = st.pockets.find(x => x.name === e.pocket);
     if (p && e.type === "จ่าย") { p.left -= e.amount; p.used = (p.used || 0) + e.amount; }
     if (p && e.type === "เติม") p.left += e.amount;
@@ -119,10 +134,10 @@ async function flushQueue() {
   flushing = false; setQueue(queue());
   if (sent && !q.length) setTimeout(load, 2500);   // the Sheet's own numbers, once its formulas have the rows
 }
-function send(entry) {
+function send(entry, msg) {
   entry.id = uid();
   setQueue(queue().concat([entry])); refresh(); closeSheet();
-  toast("บันทึกแล้ว");
+  toast(msg || "บันทึกแล้ว");
   flushQueue();
 }
 
@@ -167,13 +182,13 @@ function moneyView() {
       ${p.budget > 0 ? `<div class="bar2"><i class="${pct < 15 ? "warn" : ""}" style="width:${pct}%"></i></div>` : ""}
       ${p.need ? `<span class="tag warn">ต้องเติม ${baht(p.need)}</span>` : ""}</button>`;
   };
-  const rows = S.recent.tx.filter(r => !hidden(r.pocket)).map(r => {
+  const rows = S.recent.tx.map((r, i) => [r, i]).filter(([r]) => !hidden(r.pocket)).map(([r, i]) => {
     const [n, tone] = pocketIco(r.pocket);
     const sign = r.type === "จ่าย" ? "−" : r.type === "เติม" ? "+" : "";
     const cls = r.type === "เติม" ? "pos" : "";
-    return `<div class="row">${ico(n, tone)}<div class="main"><div>${esc(r.note || r.debt || r.pocket)}</div>
+    return `<button class="row" data-act="entry" data-tab="tx" data-i="${i}">${ico(n, tone)}<div class="main"><div>${esc(r.note || r.debt || r.pocket)}</div>
       <div class="sub">${esc([r.who, r.pocket, relDate(r.date), r.card].filter(Boolean).join(" · "))}</div></div>
-      <div class="amt ${cls}">${sign}${baht(r.amount)}${r.pending ? "<small>กำลังส่ง</small>" : r.type === "หนี้" ? "<small>ปรับหนี้</small>" : ""}</div></div>`;
+      <div class="amt ${cls}">${sign}${baht(r.amount)}${r.pending ? "<small>กำลังส่ง</small>" : r.type === "หนี้" ? "<small>ปรับหนี้</small>" : ""}</div></button>`;
   }).join("") || `<div class="empty">ยังไม่มีรายการ</div>`;
   return header("เงิน") + mainCard + `<div class="jars">${jars.map(jar).join("")}</div>`
     + `<div class="card"><h2>${ico("receipt", "money")}รายการล่าสุด</h2>${rows}</div>`;
@@ -189,6 +204,7 @@ function supplyRow(s) {
 }
 
 let lowOpen = false;
+const LOG_ICON = { "ของใช้": "bottle", "BTS": "repeat", "ซักผ้า": "sparkle" };
 function homeView() {
   if (!S) return header("ของใช้") + waiting();
   const b = S.bts || {};
@@ -206,7 +222,12 @@ function homeView() {
   const chips = `<div class="ztabs">${[""].concat(zones).map(z => `<button class="chip" data-act="zone" data-zone="${esc(z)}" aria-pressed="${z === ui.zone}">${esc(z || "ทั้งหมด")}
     <small>${S.supplies.filter(s => !z || s.zone === z).length}</small></button>`).join("")}</div>`;
   const list = S.supplies.filter(s => !ui.zone || s.zone === ui.zone).sort((a, b2) => (a.runout || "9").localeCompare(b2.runout || "9"));
-  return header("ของใช้") + btsCard + lowCard + chips + `<div class="card">${list.map(supplyRow).join("") || `<div class="empty">ไม่มี</div>`}</div>`;
+  const logRows = S.recent.log.map((r, i) => `<button class="row" data-act="entry" data-tab="log" data-i="${i}">${ico(LOG_ICON[r.part] || "bottle", r.part === "BTS" ? "travel" : "home")}
+    <div class="main"><div>${esc(r.part === "BTS" ? "BTS · " + r.act : [r.name, r.act].filter(Boolean).join(" · "))}</div>
+    <div class="sub">${esc([r.who, relDate(r.date), r.price ? "฿" + baht(r.price) : ""].filter(Boolean).join(" · "))}</div></div>
+    <div class="amt">${baht(r.qty)}${r.pending ? "<small>กำลังส่ง</small>" : ""}</div></button>`).join("") || `<div class="empty">ยังไม่มีบันทึก</div>`;
+  return header("ของใช้") + btsCard + lowCard + `<div class="card"><h2>${ico("receipt", "home")}บันทึกล่าสุด</h2>${logRows}</div>`
+    + chips + `<div class="card">${list.map(supplyRow).join("") || `<div class="empty">ไม่มี</div>`}</div>`;
 }
 
 function setupView() {
@@ -400,6 +421,28 @@ function btsSheet(bact) {
   });
 }
 
+function entrySheet(tab, i) {
+  const r = S.recent[tab][i]; if (!r) return;
+  if (r.pending) return toast("รายการนี้ยังส่งไม่เสร็จ รอสักครู่แล้วค่อยลบ", true);
+  const isTx = tab === "tx";
+  const [n, tone] = isTx ? pocketIco(r.pocket) : [LOG_ICON[r.part] || "bottle", r.part === "BTS" ? "travel" : "home"];
+  const title = isTx ? (r.type === "จ่าย" ? "−" : r.type === "เติม" ? "+" : "") + baht(r.amount) + " บาท" : (r.part === "BTS" ? "BTS · " + r.act : r.name + " · " + r.act);
+  const facts = isTx
+    ? [["ประเภท", r.type], ["กระเป๋า", r.pocket], ["รายละเอียด", r.note], ["จ่ายด้วย", r.card], ["หนี้", r.debt], ["ใคร", r.who], ["วันที่", thDate(r.date)]]
+    : [["ส่วน", r.part], ["จำนวน", baht(r.qty)], ["ราคา", r.price ? baht(r.price) + " บาท" : ""], ["ใคร", r.who], ["วันที่", thDate(r.date)]];
+  openSheet(`${sheetHead(n, tone, title, esc(relDate(r.date)))}
+    <div class="card" style="box-shadow:none">${facts.filter(f => f[1]).map(f => `<div class="row"><div class="main sub">${esc(f[0])}</div><div class="amt">${esc(f[1])}</div></div>`).join("")}</div>
+    <button class="btn big danger" data-f="del">${svg("x")}ลบรายการนี้</button>
+    <div class="hint" style="text-align:center">ลบออกจาก Google Sheet ด้วย · ${isTx ? "ยอดกระเป๋าจะคืนตาม" : "ตัวเลขของใช้จะคำนวณใหม่"}</div>`, sh => {
+    const b = sh.querySelector('[data-f="del"]'); let armed = false;
+    b.onclick = () => {
+      if (!armed) { armed = true; b.classList.add("armed"); b.lastChild.textContent = "แตะอีกครั้งเพื่อยืนยันลบ"; return; }
+      send(isTx ? { kind: "del", tab, ts: r.ts, type: r.type, pocket: r.pocket, amount: r.amount, note: r.note || "" }
+                : { kind: "del", tab, ts: r.ts, part: r.part, act: r.act, name: r.name || "", qty: r.qty }, "ลบแล้ว");
+    };
+  });
+}
+
 function addSheet() {
   const btn = (act, icon, tone, label, extra) => `<button data-act="${act}" ${extra || ""}>${ico(icon, tone)}${label}</button>`;
   openSheet(`${sheetHead("plus", "accent", "จดอะไรดี", "")}
@@ -422,6 +465,7 @@ document.addEventListener("click", e => {
   if (!S) return toast("ยังโหลดข้อมูลไม่เสร็จ", true);
   if (a === "pay") moneySheet(b.dataset.type || (b.dataset.pocket === "Main" ? "จ่าย" : ""), b.dataset.pocket);
   else if (a === "item") itemSheet(b.dataset.name);
+  else if (a === "entry") entrySheet(b.dataset.tab, +b.dataset.i);
   else if (a === "pick") pickSheet(b.dataset.pact);
   else if (a === "bts") btsSheet(b.dataset.bact);
   else if (a === "lowall") { lowOpen = !lowOpen; render(); }
