@@ -121,7 +121,7 @@ function render() {
 function header(title) {
   const d = new Date().toLocaleDateString("th-TH", { weekday: "long", day: "numeric", month: "long" });
   return `<div class="hdr"><div><h1>${title}</h1><div class="d">${esc(d)}</div></div>
-    <div class="acts"><span id="queue" class="pill hidden"></span><button class="avatar${loading ? " spin" : ""}" data-act="setup" aria-label="ตั้งค่า">${esc(me().slice(0, 1))}</button></div></div>`;
+    <div class="acts"><span id="queue" class="pill hidden"></span><button class="avatar${loading ? " spin" : ""}" data-act="setup" aria-label="ตั้งค่า">${esc(me())}</button></div></div>`;
 }
 const waiting = () => `<div class="card"><div class="empty">กำลังโหลดจาก Google Sheet…</div></div>`;
 
