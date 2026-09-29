@@ -1,43 +1,82 @@
-// Home OS จด: a thin phone front for the Home OS Google Sheet. Reads/writes through the Apps Script web app (export/apps_script/Web.gs).
+// Home OS จด: a thin phone front for the Home OS Google Sheet, in the Home OS app's look (web/src).
+// Reads and writes through the Apps Script web app (export/apps_script/Web.gs); every entry is typed in a bottom sheet.
 "use strict";
 const $ = id => document.getElementById(id);
 const LS = {
   get(k, d) { try { const v = localStorage.getItem("hos." + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem("hos." + k, JSON.stringify(v)); } catch (e) { /* private mode */ } },
 };
+
+// ---------- look ----------
+// line icons from web/src/ui/icons.ts
+const ICONS = {
+  home: "M3 11l9-7 9 7 M5 10v10h14V10 M10 20v-6h4v6",
+  wallet: "M3 7h15a3 3 0 0 1 3 3v8a2 2 0 0 1-2 2H3z M3 7a2 2 0 0 1 2-2h11v2 M16 13h5",
+  food: "M5 3v7a3 3 0 0 0 3 3v8 M8 3v7 M11 3v7 M17 3a3 3 0 0 0-3 4v4h3v10",
+  bag: "M6 8h12l1 12H5z M9 8V6a3 3 0 0 1 6 0v2",
+  users: "M16 19v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2 M9.5 10a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7 M21 19v-2a4 4 0 0 0-3-3.9 M16 3.1a3.5 3.5 0 0 1 0 6.8",
+  card: "M3 6h18v12H3z M3 10h18 M7 15h4",
+  lock: "M6 11h12v10H6z M9 11V7a3 3 0 0 1 6 0v4",
+  receipt: "M6 3h12v18l-2-1.5L14 21l-2-1.5L10 21l-2-1.5L6 21z M9 8h6 M9 12h6 M9 16h3",
+  cart: "M3 4h2l2 12h11l2-8H6 M9 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2z M17 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2z",
+  repeat: "M17 2l4 4-4 4 M3 11V9a4 4 0 0 1 4-4h14 M7 22l-4-4 4-4 M21 13v2a4 4 0 0 1-4 4H3",
+  task: "M9 11l3 3 8-8 M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9",
+  sparkle: "M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2z",
+  bottle: "M9 3h6v3l2 3v12H7V9l2-3z",
+  arrowUp: "M12 19V5 M5 12l7-7 7 7",
+  clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M12 7v5l3 2",
+  plus: "M12 5v14 M5 12h14",
+  minus: "M5 12h14",
+  x: "M6 6l12 12 M18 6L6 18",
+  chevR: "M9 6l6 6-6 6",
+  check: "M5 12l4 4 10-10",
+};
+const svg = n => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="${ICONS[n]}"/></svg>`;
+const ico = (n, tone) => `<span class="ic ${tone || ""}">${svg(n)}</span>`;
+// POCKET_ICON in web/src/money/MoneyTab.tsx, by the Sheet's pocket names
+const POCKET = { food: ["food", "food"], spend: ["bag", "general"], family: ["users", "health"], loans: ["card", "money"], main: ["wallet", "money"], kept: ["lock", "money"] };
+const pocketIco = name => POCKET[String(name).toLowerCase()] || ["wallet", "accent"];
 const OWNER = { st: "ตัง", nan: "แนน", both: "ร่วม", "": "ร่วม" };
+
 const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const baht = n => n == null || isNaN(n) ? "–" : Number(n).toLocaleString("th-TH", { maximumFractionDigits: 2 });
 const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
-const shortDate = s => s ? s.slice(8, 10) + "/" + s.slice(5, 7) : "";
+const MON = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+const thDate = s => { if (!s) return ""; const [, m, d] = s.split("-").map(Number); return d + " " + MON[m - 1]; };
+const relDate = s => { if (!s) return ""; const t = today(); if (s === t) return "วันนี้"; const y = new Date(Date.parse(t) - 864e5).toISOString().slice(0, 10); return s === y ? "เมื่อวาน" : thDate(s); };
+const daysTo = s => s ? Math.round((Date.parse(s) - Date.parse(today())) / 864e5) : null;
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const num = v => { const t = String(v == null ? "" : v).replace(/,/g, "").trim(); const n = Number(t); return t === "" || isNaN(n) ? null : n; };
 
 let cfg = LS.get("cfg", null);            // {url, key, me}
-let S = LS.get("state", null);            // last state from the Sheet (choices + balances), shown offline too
-const ui = LS.get("ui", { view: "money", type: "จ่าย", pocket: {}, part: "ของใช้", act: "ใช้", bact: "นั่ง", pack: 35 });
+let S = LS.get("state", null);            // last state from the Sheet, shown offline too
+const ui = Object.assign({ view: "money", pocket: {}, zone: "" }, LS.get("ui", {}));
 const saveUi = () => LS.set("ui", ui);
+const me = () => (cfg && cfg.me) || "ตัง";
 
 // ---------- network ----------
 async function api(body) {
   const r = body
     ? await fetch(cfg.url, { method: "POST", body: JSON.stringify(Object.assign({ key: cfg.key }, body)) }) // text/plain: no CORS preflight
     : await fetch(cfg.url + "?key=" + encodeURIComponent(cfg.key), { cache: "no-store" });
-  const j = await r.json();
+  const j = await r.json().catch(() => { throw new Error("ติดต่อ Sheet ไม่ได้ (" + r.status + ")"); });
   if (!j.ok) throw Object.assign(new Error(j.error || "ผิดพลาด"), { server: true });
   return j;
 }
-function gotState(j) { S = j; LS.set("state", j); renderAll(); }
+function gotState(j) { S = j; LS.set("state", j); render(); }
+let loading = false;
 async function load() {
-  if (!cfg) return;
-  $("refresh").classList.add("spin");
+  if (!cfg || loading) return;
+  loading = true; setBusy(true);
   try { gotState(await api()); await flushQueue(); }
   catch (e) { toast(e.server ? e.message : "ออฟไลน์ · แสดงข้อมูลล่าสุดที่มี", true); }
-  $("refresh").classList.remove("spin");
+  loading = false; setBusy(false);
 }
+function setBusy(on) { const a = document.querySelector(".hdr .avatar"); if (a) a.classList.toggle("spin", on); }
 
 // entries that could not be sent (no signal) wait here; the server drops repeats by id
 const queue = () => LS.get("queue", []);
-function setQueue(q) { LS.set("queue", q); const el = $("queue"); el.textContent = "รอส่ง " + q.length; el.classList.toggle("hidden", !q.length); }
+function setQueue(q) { LS.set("queue", q); const el = $("queue"); if (el) { el.textContent = "รอส่ง " + q.length; el.classList.toggle("hidden", !q.length); } }
 async function flushQueue() {
   let q = queue();
   while (q.length) {
@@ -51,160 +90,316 @@ async function flushQueue() {
 }
 async function send(entry, btn) {
   entry.id = uid();
-  btn.disabled = true;
-  try { gotState(await api(entry)); toast("บันทึกแล้ว ✓"); return true; }
+  btn.disabled = true; const label = btn.textContent; btn.textContent = "กำลังบันทึก…";
+  try { gotState(await api(entry)); closeSheet(); toast("บันทึกแล้ว"); }
   catch (e) {
-    if (e.server) { toast(e.message, true); return false; }
-    setQueue(queue().concat([entry])); toast("ไม่มีสัญญาณ · เก็บไว้ส่งทีหลัง"); return true;
-  } finally { btn.disabled = false; }
+    if (e.server) { toast(e.message, true); }
+    else { setQueue(queue().concat([entry])); closeSheet(); toast("ไม่มีสัญญาณ · เก็บไว้ส่งทีหลัง"); }
+  } finally { btn.disabled = false; btn.textContent = label; }
 }
 
 let toastT;
 function toast(msg, err) {
-  const t = $("toast"); t.textContent = msg; t.className = "toast" + (err ? " err" : "");
-  clearTimeout(toastT); toastT = setTimeout(() => t.classList.add("hidden"), err ? 4000 : 2000);
+  const t = $("toast"); t.textContent = msg; t.className = "toast show" + (err ? " err" : "");
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), err ? 3500 : 1800);
 }
 
-// ---------- small builders ----------
-function seg(el, items, cur, onPick) {
-  el.innerHTML = items.map(v => `<button type="button" data-v="${esc(v)}" class="${v === cur ? "on" : ""}">${esc(v)}</button>`).join("");
-  el.onclick = e => { const b = e.target.closest("button"); if (b) onPick(b.dataset.v); };
-}
-function options(sel, items, cur, blank) {
-  sel.innerHTML = (blank ? `<option value="">${esc(blank)}</option>` : "") +
-    items.map(v => { const [val, text] = Array.isArray(v) ? v : [v, v]; return `<option value="${esc(val)}"${val === cur ? " selected" : ""}>${esc(text)}</option>`; }).join("");
-}
-const who = () => (cfg && cfg.me) || "ตัง";
-const num = v => { const n = Number(String(v).replace(/,/g, "").trim()); return String(v).trim() === "" || isNaN(n) ? null : n; };
-
-// ---------- views ----------
-function show(view) {
-  if (!cfg) view = "setup";
-  ui.view = view === "setup" ? ui.view : view; saveUi();
-  ["setup", "money", "log", "bal"].forEach(v => $("v-" + v).classList.toggle("hidden", v !== view));
-  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.view === view));
-  if (view === "setup") renderSetup();
+// ---------- screens ----------
+function render() {
+  const view = cfg ? ui.view : "setup";
+  document.documentElement.dataset.tab = view === "money" ? "money" : view === "home" ? "home" : "";
+  $("nav").classList.toggle("hidden", view === "setup");
+  document.querySelectorAll("#nav .tab").forEach(b => b.setAttribute("aria-selected", String(b.dataset.view === view)));
+  $("app").innerHTML = view === "setup" ? setupView() : `<div class="wrap"><main>${view === "money" ? moneyView() : homeView()}</main></div>`;
+  if (view === "setup") bindSetup();
+  setQueue(queue());
 }
 
-function renderSetup() {
-  const c = cfg || {};
-  $("s-url").value = c.url || ""; $("s-key").value = c.key || "";
-  let me = c.me || "ตัง";
-  const draw = () => seg($("s-me"), ["ตัง", "แนน"], me, v => { me = v; draw(); });
-  draw();
+function header(title) {
+  const d = new Date().toLocaleDateString("th-TH", { weekday: "long", day: "numeric", month: "long" });
+  return `<div class="hdr"><div><h1>${title}</h1><div class="d">${esc(d)}</div></div>
+    <div class="acts"><span id="queue" class="pill hidden"></span><button class="avatar${loading ? " spin" : ""}" data-act="setup" aria-label="ตั้งค่า">${esc(me().slice(0, 1))}</button></div></div>`;
+}
+const waiting = () => `<div class="card"><div class="empty">กำลังโหลดจาก Google Sheet…</div></div>`;
+
+function moneyView() {
+  if (!S) return header("เงิน") + waiting();
+  const main = S.pockets.find(p => p.name === "Main");
+  const jars = S.pockets.filter(p => p.name !== "Main");
+  const mainCard = main ? `<button class="card main-card" data-act="pay" data-pocket="Main">${ico("wallet", "money")}
+      <div class="txt"><div class="lab">Main · เงินกลาง</div><div class="big">${baht(main.left)}</div>
+      <div class="subline">ใช้รอบนี้ ${baht(main.used)}</div></div>${svg("chevR")}</button>` : "";
+  const jar = p => {
+    const [n, tone] = pocketIco(p.name), over = p.left < 0;
+    const pct = p.budget > 0 ? Math.max(0, Math.min(100, p.left / p.budget * 100)) : 0;
+    return `<button class="jar" data-act="pay" data-pocket="${esc(p.name)}">
+      <div class="top">${ico(n, tone)}<span class="name">${esc(p.name)}</span><span class="plus">${svg("plus")}</span></div>
+      <div class="left ${over ? "neg" : ""}">${over ? "เกิน " + baht(-p.left) : baht(p.left)}</div>
+      <div class="l">${p.budget ? "งบ " + baht(p.budget) : "ไม่มีงบ"} · ${esc(OWNER[p.owner] || p.owner)}</div>
+      ${p.budget > 0 ? `<div class="bar2"><i class="${pct < 15 ? "warn" : ""}" style="width:${pct}%"></i></div>` : ""}
+      ${p.need ? `<span class="tag warn">ต้องเติม ${baht(p.need)}</span>` : ""}</button>`;
+  };
+  const rows = S.recent.tx.map(r => {
+    const [n, tone] = pocketIco(r.pocket);
+    const sign = r.type === "จ่าย" ? "−" : r.type === "เติม" ? "+" : "";
+    const cls = r.type === "เติม" ? "pos" : "";
+    return `<div class="row">${ico(n, tone)}<div class="main"><div>${esc(r.note || r.debt || r.pocket)}</div>
+      <div class="sub">${esc([r.who, r.pocket, relDate(r.date)].filter(Boolean).join(" · "))}</div></div>
+      <div class="amt ${cls}">${sign}${baht(r.amount)}${r.type === "หนี้" ? "<small>ปรับหนี้</small>" : ""}</div></div>`;
+  }).join("") || `<div class="empty">ยังไม่มีรายการ</div>`;
+  return header("เงิน") + mainCard + `<div class="jars">${jars.map(jar).join("")}</div>`
+    + `<div class="card"><h2>${ico("receipt", "money")}รายการล่าสุด</h2>${rows}</div>`;
+}
+
+function supplyRow(s) {
+  const d = daysTo(s.runout);
+  const when = s.runout ? (d <= 0 ? "หมดแล้ว" : d <= 14 ? `หมดใน ${d} วัน` : "หมด " + thDate(s.runout)) : "";
+  const tag = s.urgent ? `<span class="tag danger">ด่วน</span>` : s.low ? `<span class="tag warn">ใกล้หมด</span>` : "";
+  return `<button class="row" data-act="item" data-name="${esc(s.name)}">${ico("bottle", s.urgent ? "danger" : s.low ? "warn" : "home")}
+    <div class="main"><div>${esc(s.name)}</div><div class="sub">${esc([when, s.buyBy ? "ซื้อก่อน " + thDate(s.buyBy) : ""].filter(Boolean).join(" · ") || s.zone)}</div></div>
+    ${tag}<div class="amt">${baht(s.left)}<small>${esc(s.unit)}</small></div></button>`;
+}
+
+let lowOpen = false;
+function homeView() {
+  if (!S) return header("ของใช้") + waiting();
+  const b = S.bts || {};
+  const btsCard = `<div class="card bts"><h2>${ico("repeat", "travel")}BTS แนน<span class="more">หมดอายุ ${esc(thDate(b.expires) || "–")}</span></h2>
+    <div class="nums"><div class="big">${baht(b.left)}<small>เที่ยว</small></div></div>
+    ${b.status ? `<div class="subline">${esc(b.status)}</div>` : ""}
+    <div class="acts"><button class="btn" data-act="bts" data-bact="นั่ง">${svg("repeat")}นั่ง</button>
+    <button class="btn no" data-act="bts" data-bact="ซื้อแพ็ก">${svg("receipt")}ซื้อแพ็ก</button></div></div>`;
+  const low = S.supplies.filter(s => s.low || s.urgent).sort((a, b2) => (a.runout || "9").localeCompare(b2.runout || "9"));
+  const lowCard = `<div class="card"><h2>${ico("cart", "warn")}ต้องซื้อเร็วๆ นี้<span class="more">${low.length} อย่าง</span></h2>
+    ${low.slice(0, lowOpen ? low.length : 5).map(supplyRow).join("") || `<div class="empty">ยังไม่มีของใกล้หมด</div>`}
+    ${low.length > 5 ? `<button class="fold" data-act="lowall" aria-expanded="${lowOpen}">${svg("chevR")}${lowOpen ? "ย่อ" : "ดูอีก " + (low.length - 5) + " อย่าง"}</button>` : ""}</div>`;
+  const zones = [...new Set(S.supplies.map(s => s.zone).filter(Boolean))];
+  if (ui.zone && zones.indexOf(ui.zone) < 0) ui.zone = "";
+  const chips = `<div class="ztabs">${[""].concat(zones).map(z => `<button class="chip" data-act="zone" data-zone="${esc(z)}" aria-pressed="${z === ui.zone}">${esc(z || "ทั้งหมด")}
+    <small>${S.supplies.filter(s => !z || s.zone === z).length}</small></button>`).join("")}</div>`;
+  const list = S.supplies.filter(s => !ui.zone || s.zone === ui.zone).sort((a, b2) => (a.runout || "9").localeCompare(b2.runout || "9"));
+  return header("ของใช้") + btsCard + lowCard + chips + `<div class="card">${list.map(supplyRow).join("") || `<div class="empty">ไม่มี</div>`}</div>`;
+}
+
+function setupView() {
+  const c = cfg || {}, who = c.me || "ตัง";
+  return `<div class="login"><div class="box">
+    <img class="logo" src="logo-login.png" alt="">
+    <h1>Home OS จด</h1><div class="sub">จดเงินกับของใช้ลง Google Sheet ของบ้าน</div>
+    <div class="who">${["ตัง", "แนน"].map(n => `<button data-who="${n}" aria-pressed="${n === who}"><span class="av">${n.slice(0, 1)}</span>${n}</button>`).join("")}</div>
+    <div class="lbl">ลิงก์ Web app</div><input id="s-url" class="fld" type="url" autocomplete="off" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(c.url || "")}">
+    <div class="lbl">รหัส</div><input id="s-key" class="fld" type="text" autocomplete="off" autocapitalize="off" value="${esc(c.key || "")}">
+    <button id="s-save" class="btn big">เข้าใช้งาน</button>
+    <div class="hint">ลิงก์กับรหัส: Google Sheet เมนู Home OS › รหัสแอปมือถือ</div>
+    ${cfg ? `<button class="link back" data-act="back">กลับ</button>` : ""}
+  </div></div>`;
+}
+function bindSetup() {
+  let who = (cfg && cfg.me) || "ตัง";
+  document.querySelectorAll(".who button").forEach(b => b.onclick = () => {
+    who = b.dataset.who; document.querySelectorAll(".who button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+  });
   $("s-save").onclick = () => {
     const url = $("s-url").value.trim(), key = $("s-key").value.trim();
     if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(url)) return toast("ลิงก์ต้องขึ้นต้น https://script.google.com และจบด้วย /exec", true);
     if (!key) return toast("ใส่รหัส", true);
-    cfg = { url, key, me }; LS.set("cfg", cfg);
-    show(ui.view || "money"); load();
+    const changed = !cfg || cfg.url !== url || cfg.key !== key;
+    cfg = { url, key, me: who }; LS.set("cfg", cfg);
+    render(); if (changed || !S) load();
   };
 }
 
-function renderMoney() {
-  if (!S) return;
-  const t = ui.type;
-  seg($("m-type"), S.txTypes, t, v => { ui.type = v; saveUi(); renderMoney(); });
-  const cur = ui.pocket[who()] || "";
-  const box = $("m-pocket");
-  box.className = "chips";
-  box.innerHTML = S.pockets.map(p => `<button type="button" data-v="${esc(p.name)}" class="${p.name === cur ? "on" : ""}">${esc(p.name)}<small>${baht(p.left)}</small></button>`).join("");
-  box.onclick = e => { const b = e.target.closest("button"); if (!b) return; ui.pocket[who()] = b.dataset.v; saveUi(); renderMoney(); };
-  document.querySelectorAll("#v-money [data-for]").forEach(l => l.classList.toggle("hidden", l.dataset.for.split(" ").indexOf(t) < 0));
-  if (!$("m-card").options.length) options($("m-card"), S.cards, "", "— ไม่ระบุ —");
-  if (!$("m-source").options.length) options($("m-source"), S.sources, "", "— ไม่ระบุ —");
-  if (!$("m-debt").options.length) options($("m-debt"), S.debts, "", "— ไม่ใช่งวดหนี้ —");
-  $("m-amount").placeholder = t === "หนี้" ? "+ กันเพิ่ม / − ลด เช่น -500" : "0";
-  $("m-amount").inputMode = t === "หนี้" ? "text" : "decimal";   // iOS decimal pad has no minus key
-  if (!$("m-who").options.length) options($("m-who"), S.people, who());
-  if (!$("m-date").value) $("m-date").value = today();
+// ---------- sheets ----------
+function openSheet(html, bind) {
+  $("sheet").innerHTML = `<div class="sheetwrap"><div class="sheet" role="dialog">${html}</div></div>`;
+  document.body.classList.add("sheet-open");
+  const wrap = $("sheet").firstChild;
+  wrap.addEventListener("click", e => { if (e.target === wrap || e.target.closest(".close")) closeSheet(); });
+  bind(wrap.firstChild);
+}
+function closeSheet() { $("sheet").innerHTML = ""; document.body.classList.remove("sheet-open"); }
+const sheetHead = (icon, tone, title, sub) => `<div class="sh">${ico(icon, tone)}<h3>${esc(title)}${sub ? `<small>${sub}</small>` : ""}</h3>
+  <button class="close" aria-label="ปิด">${svg("x")}</button></div>`;
+const segHtml = (items, cur, attr) => `<div class="seg" ${attr}>${items.map(v => `<button type="button" data-v="${esc(v)}" aria-pressed="${v === cur}">${esc(v)}</button>`).join("")}</div>`;
+const opts = (items, cur, blank) => (blank != null ? `<option value="">${esc(blank)}</option>` : "") +
+  items.map(v => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(v)}</option>`).join("");
+function bindSeg(el, onPick) {
+  el.onclick = e => { const b = e.target.closest("button"); if (!b) return; el.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(x === b))); onPick(b.dataset.v); };
+}
+// ใคร + วันที่ under "เพิ่มเติม": the defaults (me, today) need no taps
+const moreHtml = (extra, who) => `<button type="button" class="fold" aria-expanded="false">${svg("chevR")}เพิ่มเติม<span class="sum"></span></button>
+  <div class="foldbody hidden">${extra || ""}<div class="two"><div><div class="lbl">ใคร</div><select class="fld" data-f="who">${opts(S.people, who)}</select></div>
+  <div><div class="lbl">วันที่</div><input class="fld" type="date" data-f="date" value="${today()}" max="${today()}"></div></div></div>`;
+function bindMore(sh) {
+  const f = sh.querySelector(".fold"), body = sh.querySelector(".foldbody"), sum = f.querySelector(".sum");
+  const who = sh.querySelector('[data-f="who"]'), date = sh.querySelector('[data-f="date"]');
+  const upd = () => { sum.textContent = who.value + " · " + (date.value === today() ? "วันนี้" : thDate(date.value)); };
+  f.onclick = () => { const open = body.classList.toggle("hidden"); f.setAttribute("aria-expanded", String(!open)); };
+  who.onchange = upd; date.onchange = upd; upd();
+  return () => ({ who: who.value, date: date.value && date.value !== today() ? date.value : "" });
 }
 
-$("m-send").onclick = async () => {
-  const t = ui.type, amount = num($("m-amount").value), pocket = ui.pocket[who()], debt = $("m-debt").value;
-  if (!pocket) return toast("เลือกกระเป๋า", true);
-  if (amount == null || amount === 0 || (t !== "หนี้" && amount < 0)) return toast("ใส่จำนวนเงิน", true);
-  if (t === "หนี้" && !debt) return toast("เลือกหนี้", true);
-  const d = $("m-date").value;
-  const ok = await send({
-    kind: "tx", type: t, pocket, amount, note: $("m-note").value.trim(), who: $("m-who").value,
-    date: d && d !== today() ? d : "",
-    card: t === "จ่าย" ? $("m-card").value : "", source: t === "เติม" ? $("m-source").value : "", debt,
-  }, $("m-send"));
-  if (ok) { $("m-amount").value = ""; $("m-note").value = ""; $("m-card").value = ""; $("m-debt").value = ""; $("m-date").value = today(); }
-};
-
-const QTY_LABEL = { นับ: "ยังไม่เปิดเหลือกี่หน่วย", ซื้อ: "ซื้อกี่หน่วย", ใช้: "เปิดใช้กี่หน่วย", นั่ง: "นั่งกี่เที่ยว" };
-function renderLog() {
-  if (!S) return;
-  const part = ui.part, bts = part === "BTS";
-  seg($("l-part"), ["ของใช้", "BTS"], part, v => { ui.part = v; saveUi(); renderLog(); });
-  $("l-supply").classList.toggle("hidden", bts); $("l-bts").classList.toggle("hidden", !bts);
-  let act;
-  if (!bts) {
-    act = ui.act;
-    seg($("l-act"), ["ใช้", "ซื้อ", "นับ"], act, v => { ui.act = v; saveUi(); renderLog(); });
-    const sel = $("l-name"), keep = sel.value;
-    options(sel, S.supplies.map(s => [s.name, s.name + (s.low ? " ⚠︎" : "")]), keep, "— เลือกของ —");
-    const s = S.supplies.find(x => x.name === sel.value);
-    $("l-left").textContent = s ? `เหลือ ${baht(s.left)} ${s.unit}` : "";
-    sel.onchange = renderLog;
-  } else {
-    act = ui.bact;
-    const b = S.bts || {};
-    $("bts-card").innerHTML = `<b>เหลือ ${baht(b.left)} เที่ยว</b> · หมดอายุ ${esc(shortDate(b.expires))}<div class="hint">${esc(b.status)}</div>`;
-    seg($("l-bact"), ["นั่ง", "ซื้อแพ็ก"], act, v => { ui.bact = v; saveUi(); renderLog(); });
-    seg($("l-pack"), S.packs.map(String), String(ui.pack), v => { ui.pack = +v; saveUi(); renderLog(); });
-    $("l-pack").className = "chips" + (act !== "ซื้อแพ็ก" ? " hidden" : "");
-    if (act === "นั่ง" && !$("l-qty").value) $("l-qty").value = "2";
-  }
-  $("l-qty-l").classList.toggle("hidden", act === "ซื้อแพ็ก");
-  $("l-qty-l").querySelector("span").textContent = QTY_LABEL[act] || "จำนวน";
-  $("l-price-l").classList.toggle("hidden", act !== "ซื้อ" && act !== "ซื้อแพ็ก");
-  if (!$("l-who").options.length) options($("l-who"), S.people, who());
-  if (!$("l-date").value) $("l-date").value = today();
+const TYPE_LOOK = { "จ่าย": ["receipt", "money"], "เติม": ["arrowUp", "money"], "หนี้": ["card", "money"] };
+function moneySheet(type, pocket) {
+  type = type || "จ่าย";
+  const key = t => me() + ":" + t;
+  let cur = pocket || ui.pocket[key(type)] || "";
+  let minus = false;
+  const pocketChips = () => S.pockets.map(p => { const [n, tone] = pocketIco(p.name);
+    return `<button type="button" class="chip" data-v="${esc(p.name)}" aria-pressed="${p.name === cur}">${ico(n, tone)}${esc(p.name)}<small>${baht(p.left)}</small></button>`; }).join("");
+  openSheet(`${sheetHead(TYPE_LOOK[type][0], TYPE_LOOK[type][1], type, "")}
+    ${segHtml(S.txTypes, type, 'data-f="type"')}
+    <div style="height:12px"></div>
+    <div class="amount"><button type="button" class="sign hidden">+</button><span class="cur">฿</span>
+      <input data-f="amount" inputmode="decimal" placeholder="0" autocomplete="off"></div>
+    <div class="lbl">กระเป๋า</div><div class="chips" data-f="pocket">${pocketChips()}</div>
+    <div class="lbl">รายละเอียด</div><input class="fld" data-f="note" placeholder="เช่น กาแฟ ข้าวเที่ยง" autocomplete="off">
+    <div data-show="หนี้"><div class="lbl">หนี้</div><select class="fld" data-f="debt1">${opts(S.debts, "", "— เลือกหนี้ —")}</select></div>
+    ${moreHtml(`<div data-show="จ่าย"><div class="lbl">บัตร</div><select class="fld" data-f="card">${opts(S.cards, "", "— ไม่ระบุ —")}</select></div>
+      <div data-show="เติม"><div class="lbl">ที่มา</div><select class="fld" data-f="source">${opts(S.sources, "", "— ไม่ระบุ —")}</select></div>
+      <div data-show="เติม จ่าย"><div class="lbl">งวดหนี้ (ถ้ามี)</div><select class="fld" data-f="debt2">${opts(S.debts, "", "— ไม่ใช่งวดหนี้ —")}</select></div>`, me())}
+    <button class="btn big" data-f="save">บันทึก</button>`, sh => {
+    const f = n => sh.querySelector(`[data-f="${n}"]`);
+    const title = sh.querySelector(".sh h3"), icon = sh.querySelector(".sh .ic"), sign = sh.querySelector(".sign");
+    const sub = () => { const p = S.pockets.find(x => x.name === cur);
+      title.innerHTML = esc(type) + (p ? `<small>${type === "เติม" ? "เข้า" : "จาก"} ${esc(p.name)} · เหลือ ${baht(p.left)}</small>` : "<small>เลือกกระเป๋า</small>"); };
+    const show = () => {
+      sh.querySelectorAll("[data-show]").forEach(el => el.classList.toggle("hidden", el.dataset.show.split(" ").indexOf(type) < 0));
+      sign.classList.toggle("hidden", type !== "หนี้");
+      icon.innerHTML = svg(TYPE_LOOK[type][0]); sub();
+    };
+    bindSeg(f("type"), v => { type = v; if (!pocket) { cur = ui.pocket[key(type)] || cur; f("pocket").innerHTML = pocketChips(); } show(); });
+    f("pocket").onclick = e => { const b = e.target.closest("button"); if (!b) return; cur = b.dataset.v;
+      f("pocket").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(x === b))); sub(); };
+    sign.onclick = () => { minus = !minus; sign.textContent = minus ? "−" : "+"; sign.classList.toggle("minus", minus); };
+    const more = bindMore(sh);
+    show();
+    f("amount").focus();
+    f("save").onclick = () => {
+      let amount = num(f("amount").value);
+      if (amount == null || amount <= 0) return toast("ใส่จำนวนเงิน", true);
+      if (!cur) return toast("เลือกกระเป๋า", true);
+      const debt = type === "หนี้" ? f("debt1").value : f("debt2").value;
+      if (type === "หนี้" && !debt) return toast("เลือกหนี้", true);
+      if (type === "หนี้" && minus) amount = -amount;
+      ui.pocket[key(type)] = cur; saveUi();
+      const m = more();
+      send({ kind: "tx", type, pocket: cur, amount, note: f("note").value.trim(), who: m.who, date: m.date,
+        card: type === "จ่าย" ? f("card").value : "", source: type === "เติม" ? f("source").value : "", debt }, f("save"));
+    };
+  });
 }
 
-$("l-send").onclick = async () => {
-  const bts = ui.part === "BTS", act = bts ? ui.bact : ui.act;
-  const qty = act === "ซื้อแพ็ก" ? ui.pack : num($("l-qty").value);
-  const name = bts ? "" : $("l-name").value;
-  if (!bts && !name) return toast("เลือกของ", true);
-  if (qty == null || qty < 0 || (act !== "นับ" && qty === 0)) return toast("ใส่จำนวน", true);
-  const price = (act === "ซื้อ" || act === "ซื้อแพ็ก") ? num($("l-price").value) : null;
-  const d = $("l-date").value;
-  const ok = await send({ kind: "log", part: ui.part, act, name, qty, price: price == null ? "" : price, who: $("l-who").value,
-    date: d && d !== today() ? d : "" }, $("l-send"));
-  if (ok) { $("l-qty").value = ""; $("l-price").value = ""; $("l-date").value = today(); renderLog(); }
-};
-
-function renderBal() {
-  if (!S) return;
-  const groups = {};
-  S.pockets.forEach(p => { const g = OWNER[p.owner] || p.owner; (groups[g] = groups[g] || []).push(p); });
-  $("b-pockets").innerHTML = Object.keys(groups).map(g => `<div class="group">${esc(g)}</div><div class="pockets">` +
-    groups[g].map(p => `<div class="pocket"><div class="n">${esc(p.name)}</div><div class="v ${p.left < 0 ? "neg" : ""}">${baht(p.left)}</div>` +
-      `<div class="s">${p.used ? "ใช้ " + baht(p.used) : ""}${p.need ? " · ต้องเติม " + baht(p.need) : ""}</div></div>`).join("") + `</div>`).join("");
-  const li = (d, t, a, cls) => `<li><span class="d">${esc(shortDate(d))}</span><span class="t">${t}</span><span class="a ${cls || ""}">${a}</span></li>`;
-  const empty = '<li class="empty">ไม่มี</li>';
-  const low = S.supplies.filter(s => s.low);
-  $("b-low").innerHTML = low.map(s => li("", esc(s.name), esc(baht(s.left) + " " + s.unit))).join("") || empty;
-  $("b-tx").innerHTML = S.recent.tx.map(r => li(r.date, esc([r.who, r.pocket, r.note || r.debt].filter(Boolean).join(" · ")),
-    (r.type === "จ่าย" ? "−" : r.type === "เติม" ? "+" : "หนี้ ") + baht(r.amount), r.type === "จ่าย" ? "neg" : r.type === "เติม" ? "pos" : "")).join("") || empty;
-  $("b-log").innerHTML = S.recent.log.map(r => li(r.date, esc([r.part, r.act, r.name].filter(Boolean).join(" · ")),
-    esc(baht(r.qty) + (r.price ? " · ฿" + baht(r.price) : "")))).join("") || empty;
+const ACT_LABEL = { "ใช้": "เปิดของใหม่กี่", "ซื้อ": "ซื้อมากี่", "นับ": "ยังไม่เปิดเหลือกี่" };
+function itemSheet(name, act) {
+  const s = S.supplies.find(x => x.name === name); if (!s) return;
+  act = act || "ใช้";
+  const sub = `เหลือ ${baht(s.left)} ${esc(s.unit)}${s.runout ? " · หมด " + thDate(s.runout) : ""}`;
+  openSheet(`${sheetHead("bottle", s.low ? "warn" : "home", s.name, sub)}
+    ${segHtml(["ใช้", "ซื้อ", "นับ"], act, 'data-f="act"')}
+    <div class="lbl" data-f="qlabel"></div>
+    <div class="step"><button type="button" data-f="dec">${svg("minus")}</button><input data-f="qty" inputmode="decimal"><button type="button" data-f="inc">${svg("plus")}</button></div>
+    <div data-f="pricebox"><div class="lbl">ราคารวม (บาท)</div><input class="fld" data-f="price" inputmode="decimal" placeholder="ไม่ใส่ก็ได้"></div>
+    ${moreHtml("", me())}
+    <button class="btn big" data-f="save">บันทึก</button>`, sh => {
+    const f = n => sh.querySelector(`[data-f="${n}"]`);
+    const set = () => {
+      f("qlabel").textContent = ACT_LABEL[act] + (s.unit || "ชิ้น");
+      f("qty").value = act === "นับ" ? (s.left == null ? 0 : s.left) : 1;
+      f("pricebox").classList.toggle("hidden", act !== "ซื้อ");
+    };
+    bindSeg(f("act"), v => { act = v; set(); });
+    const step = d => { const q = num(f("qty").value) || 0; f("qty").value = Math.max(0, q + d); };
+    f("dec").onclick = () => step(-1); f("inc").onclick = () => step(1);
+    const more = bindMore(sh); set();
+    f("save").onclick = () => {
+      const qty = num(f("qty").value);
+      if (qty == null || qty < 0 || (act !== "นับ" && qty === 0)) return toast("ใส่จำนวน", true);
+      const m = more(), price = act === "ซื้อ" ? num(f("price").value) : null;
+      send({ kind: "log", part: "ของใช้", act, name: s.name, qty, price: price == null ? "" : price, who: m.who, date: m.date }, f("save"));
+    };
+  });
 }
 
-function renderAll() { renderMoney(); renderLog(); renderBal(); }
+function pickSheet(act) {
+  const list = S.supplies.slice().sort((a, b) => (b.low - a.low) || a.name.localeCompare(b.name, "th"));
+  openSheet(`${sheetHead(act === "ซื้อ" ? "cart" : act === "นับ" ? "task" : "sparkle", "home", act === "ใช้" ? "เปิดของใหม่" : act + "ของ", "เลือกของ")}
+    <input class="fld" data-f="q" placeholder="ค้นหา" autocomplete="off">
+    <div data-f="list" style="margin-top:6px"></div>`, sh => {
+    const f = n => sh.querySelector(`[data-f="${n}"]`);
+    const draw = () => { const q = f("q").value.trim().toLowerCase();
+      f("list").innerHTML = list.filter(s => !q || s.name.toLowerCase().indexOf(q) >= 0).map(supplyRow).join("") || `<div class="empty">ไม่พบ</div>`; };
+    f("q").oninput = draw; draw();
+    f("list").onclick = e => { const b = e.target.closest("[data-name]"); if (b) { e.stopPropagation(); itemSheet(b.dataset.name, act); } };
+  });
+}
+
+function btsSheet(bact) {
+  const b = S.bts || {};
+  let pack = S.packs[0];
+  openSheet(`${sheetHead("repeat", "travel", "BTS", `เหลือ ${baht(b.left)} เที่ยว · หมดอายุ ${esc(thDate(b.expires) || "–")}`)}
+    ${segHtml(["นั่ง", "ซื้อแพ็ก"], bact, 'data-f="act"')}
+    <div data-show="นั่ง"><div class="lbl">นั่งกี่เที่ยว</div>
+      <div class="step"><button type="button" data-f="dec">${svg("minus")}</button><input data-f="qty" inputmode="numeric" value="2"><button type="button" data-f="inc">${svg("plus")}</button></div></div>
+    <div data-show="ซื้อแพ็ก"><div class="lbl">แพ็ก</div><div class="chips" data-f="pack">${S.packs.map(p => `<button type="button" class="chip" data-v="${p}" aria-pressed="${p === pack}">${p} เที่ยว</button>`).join("")}</div>
+      <div class="lbl">ราคา (บาท)</div><input class="fld" data-f="price" inputmode="decimal" placeholder="ไม่ใส่ก็ได้"></div>
+    ${moreHtml("", me())}
+    <button class="btn big" data-f="save">บันทึก</button>`, sh => {
+    const f = n => sh.querySelector(`[data-f="${n}"]`);
+    const show = () => sh.querySelectorAll("[data-show]").forEach(el => el.classList.toggle("hidden", el.dataset.show !== bact));
+    bindSeg(f("act"), v => { bact = v; show(); });
+    f("pack").onclick = e => { const x = e.target.closest("button"); if (!x) return; pack = +x.dataset.v;
+      f("pack").querySelectorAll("button").forEach(y => y.setAttribute("aria-pressed", String(y === x))); };
+    const step = d => { f("qty").value = Math.max(1, (num(f("qty").value) || 0) + d); };
+    f("dec").onclick = () => step(-1); f("inc").onclick = () => step(1);
+    const more = bindMore(sh); show();
+    f("save").onclick = () => {
+      const qty = bact === "ซื้อแพ็ก" ? pack : num(f("qty").value);
+      if (!qty || qty < 0) return toast("ใส่จำนวนเที่ยว", true);
+      const m = more(), price = bact === "ซื้อแพ็ก" ? num(f("price").value) : null;
+      send({ kind: "log", part: "BTS", act: bact, name: "", qty, price: price == null ? "" : price, who: m.who, date: m.date }, f("save"));
+    };
+  });
+}
+
+function addSheet() {
+  const btn = (act, icon, tone, label, extra) => `<button data-act="${act}" ${extra || ""}>${ico(icon, tone)}${label}</button>`;
+  openSheet(`${sheetHead("plus", "accent", "จดอะไรดี", "")}
+    <div class="shortcuts">
+      <div class="sec">เงิน</div><div class="grid">
+        ${btn("pay", "receipt", "money", "จ่าย", 'data-type="จ่าย"')}${btn("pay", "arrowUp", "money", "เติมเงิน", 'data-type="เติม"')}${btn("pay", "card", "money", "หนี้", 'data-type="หนี้"')}</div>
+      <div class="sec">ของใช้</div><div class="grid">
+        ${btn("pick", "sparkle", "home", "เปิดของใหม่", 'data-pact="ใช้"')}${btn("pick", "cart", "home", "ซื้อของ", 'data-pact="ซื้อ"')}${btn("pick", "task", "home", "นับของ", 'data-pact="นับ"')}</div>
+      <div class="sec">BTS</div><div class="grid">
+        ${btn("bts", "repeat", "travel", "นั่ง BTS", 'data-bact="นั่ง"')}${btn("bts", "receipt", "travel", "ซื้อแพ็ก", 'data-bact="ซื้อแพ็ก"')}</div>
+    </div>`, () => {});
+}
+
+// ---------- taps ----------
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-act]"); if (!b) return;
+  const a = b.dataset.act;
+  if (a === "setup") { closeSheet(); $("app").innerHTML = setupView(); $("nav").classList.add("hidden"); document.documentElement.dataset.tab = ""; bindSetup(); return; }
+  if (a === "back") return render();
+  if (!S) return toast("ยังโหลดข้อมูลไม่เสร็จ", true);
+  if (a === "pay") moneySheet(b.dataset.type || (b.dataset.pocket === "Main" ? "จ่าย" : ""), b.dataset.pocket);
+  else if (a === "item") itemSheet(b.dataset.name);
+  else if (a === "pick") pickSheet(b.dataset.pact);
+  else if (a === "bts") btsSheet(b.dataset.bact);
+  else if (a === "lowall") { lowOpen = !lowOpen; render(); }
+  else if (a === "zone") { ui.zone = b.dataset.zone; saveUi(); render(); }
+});
 
 // ---------- start ----------
-document.querySelector("nav").onclick = e => { const b = e.target.closest("button"); if (b) show(b.dataset.view); };
-$("refresh").onclick = load;
-$("b-setup").onclick = () => show("setup");
+document.querySelectorAll("#nav .tab").forEach(t => {
+  t.innerHTML = svg(t.dataset.view === "money" ? "wallet" : "home") + (t.dataset.view === "money" ? "เงิน" : "ของใช้");
+  t.onclick = () => { ui.view = t.dataset.view; saveUi(); render(); window.scrollTo(0, 0); };
+});
+$("add").innerHTML = svg("plus");
+$("add").onclick = () => S ? addSheet() : toast("ยังโหลดข้อมูลไม่เสร็จ", true);
 window.addEventListener("online", flushQueue);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") load(); });
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
-setQueue(queue());
-renderAll();
-show(ui.view || "money");
+if (ui.view !== "money" && ui.view !== "home") ui.view = "money";
+render();
 load();
