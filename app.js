@@ -60,10 +60,15 @@ const saveUi = () => LS.set("ui", ui);
 const me = () => (cfg && cfg.me) || "ตัง";
 
 // ---------- network ----------
+// Google sometimes takes a minute or never answers: give up after a while so the entry is tried again (the server drops repeats by id)
 async function api(body) {
-  const r = body
-    ? await fetch(cfg.url, { method: "POST", body: JSON.stringify(Object.assign({ key: cfg.key }, body)) }) // text/plain: no CORS preflight
-    : await fetch(cfg.url + "?key=" + encodeURIComponent(cfg.key), { cache: "no-store" });
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), body ? 40000 : 60000);
+  let r;
+  try {
+    r = body
+      ? await fetch(cfg.url, { method: "POST", body: JSON.stringify(Object.assign({ key: cfg.key }, body)), signal: ctl.signal }) // text/plain: no CORS preflight
+      : await fetch(cfg.url + "?key=" + encodeURIComponent(cfg.key), { cache: "no-store", signal: ctl.signal });
+  } finally { clearTimeout(timer); }
   const j = await r.json().catch(() => { throw new Error("ติดต่อ Sheet ไม่ได้ (" + r.status + ")"); });
   if (!j.ok) throw Object.assign(new Error(j.error || "ผิดพลาด"), { server: true });
   return j;
@@ -103,36 +108,48 @@ function applyEntry(st, e) {
   return st;
 }
 let loading = false;
+let loadT = null, loadFails = 0;
 async function load() {
   if (!cfg || loading) return;
+  clearTimeout(loadT);
   loading = true; setBusy(true);
-  try { gotState(await api()); flushQueue(); }
-  catch (e) { toast(e.server ? e.message : "ออฟไลน์ · แสดงข้อมูลล่าสุดที่มี", true); }
+  try { gotState(await api()); loadFails = 0; }
+  catch (e) {
+    if (e.server) toast(e.message, true);
+    else {                                         // Google dropped it (a 404 or no answer now and then): try again shortly
+      if (++loadFails === 2) toast("ติดต่อ Sheet ไม่ได้ · แสดงข้อมูลล่าสุดที่มี", true);
+      loadT = setTimeout(load, Math.min(10000 * loadFails, 60000));
+    }
+  }
   loading = false; setBusy(false);
+  flushQueue();                                    // what is waiting goes out whether the read worked or not
 }
 function setBusy(on) { const a = document.querySelector(".hdr .avatar"); if (a) a.classList.toggle("spin", on); }
 
 // entries that could not be sent (no signal) wait here; the server drops repeats by id
 const queue = () => LS.get("queue", []);
-let flushing = false, offline = false;
+let flushing = false, offline = false, retryT = null, retryIn = 20;
 function setQueue(q) {
   LS.set("queue", q);
   const el = $("queue"); if (el) { el.textContent = (offline ? "รอส่ง " : "กำลังส่ง ") + q.length; el.classList.toggle("hidden", !q.length); }
 }
 async function flushQueue() {
   if (flushing || !cfg) return;
-  flushing = true;
+  clearTimeout(retryT); retryT = null;
+  flushing = true; setQueue(queue());
   let sent = false, q = queue();
   while (q.length) {
-    try { await api(q[0]); offline = false; sent = true; }
+    try { await api(q[0]); offline = false; sent = true; retryIn = 20; }
     catch (e) {
-      if (!e.server) { offline = true; break; }  // no signal: keep the rest for later
+      if (!e.server) { offline = true; break; }  // no signal or no answer: keep the rest for the next try
       toast("บันทึกไม่ได้: " + e.message, true);
     }
     q = queue().slice(1); setQueue(q);
   }
   flushing = false; setQueue(queue());
-  if (sent && !q.length) setTimeout(load, 2500);   // the Sheet's own numbers, once its formulas have the rows
+  if (queue().length) {                            // try again by itself: 20 s, then longer, at most every 2 minutes
+    retryT = setTimeout(flushQueue, retryIn * 1000); retryIn = Math.min(retryIn * 2, 120);
+  } else if (sent) setTimeout(load, 2500);         // the Sheet's own numbers, once its formulas have the rows
 }
 function send(entry, msg) {
   entry.id = uid();
@@ -161,7 +178,7 @@ function render() {
 function header(title) {
   const d = new Date().toLocaleDateString("th-TH", { weekday: "long", day: "numeric", month: "long" });
   return `<div class="hdr"><div><h1>${title}</h1><div class="d">${esc(d)}</div></div>
-    <div class="acts"><span id="queue" class="pill hidden"></span><button class="avatar${loading ? " spin" : ""}" data-act="setup" aria-label="ตั้งค่า">${esc(me())}</button></div></div>`;
+    <div class="acts"><button id="queue" class="pill hidden" data-act="flush" aria-label="ส่งตอนนี้"></button><button class="avatar${loading ? " spin" : ""}" data-act="setup" aria-label="ตั้งค่า">${esc(me())}</button></div></div>`;
 }
 const waiting = () => `<div class="card"><div class="empty">กำลังโหลดจาก Google Sheet…</div></div>`;
 
@@ -259,50 +276,16 @@ function bindSetup() {
 }
 
 // ---------- sheets ----------
-let sheetY = 0;   // where the page was scrolled when the first sheet opened
 function openSheet(html, bind) {
-  const body = document.body;
-  if (!body.classList.contains("sheet-open")) { sheetY = window.scrollY; body.style.top = -sheetY + "px"; body.classList.add("sheet-open"); }
   $("sheet").innerHTML = `<div class="sheetwrap"><div class="sheet" role="dialog">${html}</div></div>`;
-  const sh = $("sheet").firstChild.firstChild;
-  dragToClose(sh);
-  bind(sh);
+  document.body.classList.add("sheet-open");
+  const wrap = $("sheet").firstChild;
+  wrap.addEventListener("click", e => { if (e.target === wrap || e.target.closest(".close")) closeSheet(); });
+  bind(wrap.firstChild);
 }
-function closeSheet() {
-  const body = document.body;
-  $("sheet").innerHTML = "";
-  if (!body.classList.contains("sheet-open")) return;
-  body.classList.remove("sheet-open"); body.style.top = ""; window.scrollTo(0, sheetY);
-}
-// no close button: pull the sheet down from its top to close it
-function dragToClose(sh) {
-  const wrap = sh.parentNode;
-  let y0 = 0, t0 = 0, dy = 0, drag = false, can = false;
-  sh.addEventListener("touchstart", e => {
-    const el = e.target.closest("input,select,textarea");
-    can = sh.scrollTop <= 0 && !(el && el === document.activeElement);
-    y0 = e.touches[0].clientY; t0 = Date.now(); dy = 0; drag = false;
-  }, { passive: true });
-  sh.addEventListener("touchmove", e => {
-    if (!can) return;
-    dy = e.touches[0].clientY - y0;
-    if (!drag) { if (dy <= 0 || sh.scrollTop > 0) { can = false; return; } drag = true; sh.classList.add("dragging"); }
-    e.preventDefault();
-    dy = Math.max(0, dy);
-    sh.style.transform = `translateY(${dy}px)`;
-    wrap.style.opacity = String(1 - Math.min(dy / sh.offsetHeight, 1) * .4);
-  }, { passive: false });
-  sh.addEventListener("touchend", () => {
-    if (!drag) return;
-    drag = false; sh.classList.remove("dragging");
-    if (dy > 120 || dy / Math.max(1, Date.now() - t0) > .5) {
-      sh.style.transform = ""; sh.classList.add("closing");
-      const done = () => { if (sh.isConnected) closeSheet(); };
-      sh.addEventListener("transitionend", done, { once: true }); setTimeout(done, 250);
-    } else { sh.style.transform = ""; wrap.style.opacity = ""; }
-  });
-}
-const sheetHead = (icon, tone, title, sub) => `<div class="sh">${ico(icon, tone)}<h3>${esc(title)}${sub ? `<small>${sub}</small>` : ""}</h3></div>`;
+function closeSheet() { $("sheet").innerHTML = ""; document.body.classList.remove("sheet-open"); }
+const sheetHead = (icon, tone, title, sub) => `<div class="sh">${ico(icon, tone)}<h3>${esc(title)}${sub ? `<small>${sub}</small>` : ""}</h3>
+  <button class="close" aria-label="ปิด">${svg("x")}</button></div>`;
 const segHtml = (items, cur, attr) => `<div class="seg" ${attr}>${items.map(v => `<button type="button" data-v="${esc(v)}" aria-pressed="${v === cur}">${esc(v)}</button>`).join("")}</div>`;
 const opts = (items, cur, blank) => (blank != null ? `<option value="">${esc(blank)}</option>` : "") +
   items.map(v => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(v)}</option>`).join("");
@@ -496,6 +479,7 @@ document.addEventListener("click", e => {
   const a = b.dataset.act;
   if (a === "setup") { closeSheet(); $("app").innerHTML = setupView(); $("nav").classList.add("hidden"); document.documentElement.dataset.tab = ""; bindSetup(); return; }
   if (a === "back") return render();
+  if (a === "flush") { retryIn = 20; toast("กำลังส่งรายการที่ค้าง…"); return flushQueue(); }
   if (!S) return toast("ยังโหลดข้อมูลไม่เสร็จ", true);
   if (a === "pay") moneySheet(b.dataset.type || (b.dataset.pocket === "Main" ? "จ่าย" : ""), b.dataset.pocket);
   else if (a === "item") itemSheet(b.dataset.name);
@@ -513,7 +497,6 @@ document.querySelectorAll("#nav .tab").forEach(t => {
 });
 $("add").innerHTML = svg("plus");
 $("add").onclick = () => S ? addSheet() : toast("ยังโหลดข้อมูลไม่เสร็จ", true);
-document.addEventListener("keydown", e => { if (e.key === "Escape" && $("sheet").firstChild) closeSheet(); });
 window.addEventListener("online", flushQueue);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") load(); });
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");

@@ -52,9 +52,6 @@
 html{ height:100%; }
 *{ box-sizing:border-box; }
 html,body{ overscroll-behavior:none; -webkit-tap-highlight-color:transparent; }
-html,.sheet{ scrollbar-width:none; } html::-webkit-scrollbar,.sheet::-webkit-scrollbar{ display:none; }
-/* a sheet is open: the page behind stays put (top is set from app.js) */
-body.sheet-open{ position:fixed; left:0; right:0; overflow:hidden; }
 body{ margin:0; min-height:100dvh; background:var(--bg); color:var(--ink); font-family:"Anuphan","Noto Sans Thai",system-ui,-apple-system,sans-serif; font-size:16px; line-height:1.5; -webkit-font-smoothing:antialiased; transition:background .2s; }
 button{ font:inherit; color:inherit; cursor:pointer; -webkit-user-select:none; user-select:none; }
 h1,h2,h3{ margin:0; font-weight:600; }
@@ -67,7 +64,7 @@ svg.i{ width:22px; height:22px; stroke:currentColor; fill:none; stroke-width:1.7
 .hdr .d{ font-size:13px; color:var(--ink-2); margin-top:2px; }
 .hdr .acts{ display:flex; gap:8px; align-items:center; }
 .avatar{ min-width:40px; height:40px; padding:0 10px; border-radius:20px; border:0; background:var(--accent-fill); color:var(--on-accent); font-weight:600; font-size:14px; display:grid; place-items:center; }
-.pill{ font-size:12px; font-weight:600; padding:4px 10px; border-radius:99px; background:var(--warn-soft); color:var(--warn); }
+.pill{ font-size:12px; font-weight:600; padding:4px 10px; border-radius:99px; border:0; background:var(--warn-soft); color:var(--warn); }
 .spin{ animation:pulse .9s ease-in-out infinite; }
 main{ animation:fade .16s ease-out; }
 @keyframes fade{ from{ opacity:0; transform:translateY(3px);} to{ opacity:1; transform:none;} }
@@ -151,14 +148,13 @@ button.row:active{ background:var(--surface-2); }
 .bottomnav .add:active{ transform:scale(.95); }
 
 /* sheets */
-.sheetwrap{ position:fixed; inset:0; z-index:8; background:var(--surface); display:flex; animation:fade .15s; }
-/* full screen, no close button: drag it down to close (app.js dragToClose) */
-.sheet{ width:100%; max-width:600px; margin:0 auto; background:var(--surface); padding:calc(8px + env(safe-area-inset-top,0px)) 20px calc(20px + env(safe-area-inset-bottom,0px)); animation:up .22s cubic-bezier(.2,.8,.2,1); height:100dvh; overflow-y:auto; overscroll-behavior:contain; transition:transform .2s cubic-bezier(.2,.8,.2,1); }
-.sheet.dragging{ transition:none; } .sheet.closing{ transform:translateY(100%); }
+.sheetwrap{ position:fixed; inset:0; z-index:8; background:rgba(16,64,59,.25); display:flex; align-items:flex-end; animation:fade .15s; }
+.sheet{ width:100%; max-width:600px; margin:0 auto; background:var(--surface); border-radius:20px 20px 0 0; padding:8px 20px calc(20px + env(safe-area-inset-bottom,0px)); animation:up .22s cubic-bezier(.2,.8,.2,1); max-height:92dvh; overflow-y:auto; }
 .sheet::before{ content:""; display:block; width:36px; height:5px; border-radius:3px; background:var(--line); margin:0 auto 14px; }
 .sheet .sh{ display:flex; align-items:center; gap:12px; margin-bottom:14px; }
 .sheet .sh .ic{ width:40px; height:40px; }
 .sheet .sh h3{ font-size:20px; flex:1; min-width:0; line-height:1.2; } .sheet .sh h3 small{ display:block; font-size:13px; color:var(--ink-2); font-weight:400; margin-top:2px; }
+.sheet .close{ width:34px; height:34px; border-radius:50%; border:0; background:var(--surface-2); color:var(--ink-2); display:grid; place-items:center; flex:none; } .sheet .close svg{ width:18px; height:18px; }
 @keyframes up{ from{ transform:translateY(40px); opacity:.6;} to{ transform:none; opacity:1;} }
 
 .shortcuts .sec{ font-size:13px; font-weight:600; color:var(--ink-2); margin:6px 0 8px; }
