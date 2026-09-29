@@ -259,16 +259,50 @@ function bindSetup() {
 }
 
 // ---------- sheets ----------
+let sheetY = 0;   // where the page was scrolled when the first sheet opened
 function openSheet(html, bind) {
+  const body = document.body;
+  if (!body.classList.contains("sheet-open")) { sheetY = window.scrollY; body.style.top = -sheetY + "px"; body.classList.add("sheet-open"); }
   $("sheet").innerHTML = `<div class="sheetwrap"><div class="sheet" role="dialog">${html}</div></div>`;
-  document.body.classList.add("sheet-open");
-  const wrap = $("sheet").firstChild;
-  wrap.addEventListener("click", e => { if (e.target === wrap || e.target.closest(".close")) closeSheet(); });
-  bind(wrap.firstChild);
+  const sh = $("sheet").firstChild.firstChild;
+  dragToClose(sh);
+  bind(sh);
 }
-function closeSheet() { $("sheet").innerHTML = ""; document.body.classList.remove("sheet-open"); }
-const sheetHead = (icon, tone, title, sub) => `<div class="sh">${ico(icon, tone)}<h3>${esc(title)}${sub ? `<small>${sub}</small>` : ""}</h3>
-  <button class="close" aria-label="ปิด">${svg("x")}</button></div>`;
+function closeSheet() {
+  const body = document.body;
+  $("sheet").innerHTML = "";
+  if (!body.classList.contains("sheet-open")) return;
+  body.classList.remove("sheet-open"); body.style.top = ""; window.scrollTo(0, sheetY);
+}
+// no close button: pull the sheet down from its top to close it
+function dragToClose(sh) {
+  const wrap = sh.parentNode;
+  let y0 = 0, t0 = 0, dy = 0, drag = false, can = false;
+  sh.addEventListener("touchstart", e => {
+    const el = e.target.closest("input,select,textarea");
+    can = sh.scrollTop <= 0 && !(el && el === document.activeElement);
+    y0 = e.touches[0].clientY; t0 = Date.now(); dy = 0; drag = false;
+  }, { passive: true });
+  sh.addEventListener("touchmove", e => {
+    if (!can) return;
+    dy = e.touches[0].clientY - y0;
+    if (!drag) { if (dy <= 0 || sh.scrollTop > 0) { can = false; return; } drag = true; sh.classList.add("dragging"); }
+    e.preventDefault();
+    dy = Math.max(0, dy);
+    sh.style.transform = `translateY(${dy}px)`;
+    wrap.style.opacity = String(1 - Math.min(dy / sh.offsetHeight, 1) * .4);
+  }, { passive: false });
+  sh.addEventListener("touchend", () => {
+    if (!drag) return;
+    drag = false; sh.classList.remove("dragging");
+    if (dy > 120 || dy / Math.max(1, Date.now() - t0) > .5) {
+      sh.style.transform = ""; sh.classList.add("closing");
+      const done = () => { if (sh.isConnected) closeSheet(); };
+      sh.addEventListener("transitionend", done, { once: true }); setTimeout(done, 250);
+    } else { sh.style.transform = ""; wrap.style.opacity = ""; }
+  });
+}
+const sheetHead = (icon, tone, title, sub) => `<div class="sh">${ico(icon, tone)}<h3>${esc(title)}${sub ? `<small>${sub}</small>` : ""}</h3></div>`;
 const segHtml = (items, cur, attr) => `<div class="seg" ${attr}>${items.map(v => `<button type="button" data-v="${esc(v)}" aria-pressed="${v === cur}">${esc(v)}</button>`).join("")}</div>`;
 const opts = (items, cur, blank) => (blank != null ? `<option value="">${esc(blank)}</option>` : "") +
   items.map(v => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(v)}</option>`).join("");
@@ -479,6 +513,7 @@ document.querySelectorAll("#nav .tab").forEach(t => {
 });
 $("add").innerHTML = svg("plus");
 $("add").onclick = () => S ? addSheet() : toast("ยังโหลดข้อมูลไม่เสร็จ", true);
+document.addEventListener("keydown", e => { if (e.key === "Escape" && $("sheet").firstChild) closeSheet(); });
 window.addEventListener("online", flushQueue);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") load(); });
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
