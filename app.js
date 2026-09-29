@@ -36,6 +36,9 @@ const ico = (n, tone) => `<span class="ic ${tone || ""}">${svg(n)}</span>`;
 // POCKET_ICON in web/src/money/MoneyTab.tsx, by the Sheet's pocket names
 const POCKET = { food: ["food", "food"], spend: ["bag", "general"], family: ["users", "health"], loans: ["card", "money"], main: ["wallet", "money"], kept: ["lock", "money"] };
 const pocketIco = name => POCKET[String(name).toLowerCase()] || ["wallet", "accent"];
+// แนน does not see ตัง's Family and Loans pockets (NAN_HIDDEN in web/src/money/History.tsx)
+const NAN_HIDDEN = ["family", "loans"];
+const hidden = name => me() === "แนน" && NAN_HIDDEN.indexOf(String(name).toLowerCase()) >= 0;
 const OWNER = { st: "ตัง", nan: "แนน", both: "ร่วม", "": "ร่วม" };
 
 const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -125,7 +128,7 @@ const waiting = () => `<div class="card"><div class="empty">กำลังโ�
 function moneyView() {
   if (!S) return header("เงิน") + waiting();
   const main = S.pockets.find(p => p.name === "Main");
-  const jars = S.pockets.filter(p => p.name !== "Main");
+  const jars = S.pockets.filter(p => p.name !== "Main" && !hidden(p.name));
   const mainCard = main ? `<button class="card main-card" data-act="pay" data-pocket="Main">${ico("wallet", "money")}
       <div class="txt"><div class="lab">Main · เงินกลาง</div><div class="big">${baht(main.left)}</div>
       <div class="subline">ใช้รอบนี้ ${baht(main.used)}</div></div>${svg("chevR")}</button>` : "";
@@ -139,7 +142,7 @@ function moneyView() {
       ${p.budget > 0 ? `<div class="bar2"><i class="${pct < 15 ? "warn" : ""}" style="width:${pct}%"></i></div>` : ""}
       ${p.need ? `<span class="tag warn">ต้องเติม ${baht(p.need)}</span>` : ""}</button>`;
   };
-  const rows = S.recent.tx.map(r => {
+  const rows = S.recent.tx.filter(r => !hidden(r.pocket)).map(r => {
     const [n, tone] = pocketIco(r.pocket);
     const sign = r.type === "จ่าย" ? "−" : r.type === "เติม" ? "+" : "";
     const cls = r.type === "เติม" ? "pos" : "";
@@ -245,7 +248,7 @@ function moneySheet(type, pocket) {
   const key = t => me() + ":" + t;
   let cur = pocket || ui.pocket[key(type)] || "";
   let minus = false;
-  const pocketChips = () => S.pockets.map(p => { const [n, tone] = pocketIco(p.name);
+  const pocketChips = () => S.pockets.filter(p => !hidden(p.name) || p.name === cur).map(p => { const [n, tone] = pocketIco(p.name);
     return `<button type="button" class="chip" data-v="${esc(p.name)}" aria-pressed="${p.name === cur}">${ico(n, tone)}${esc(p.name)}<small>${baht(p.left)}</small></button>`; }).join("");
   openSheet(`${sheetHead(TYPE_LOOK[type][0], TYPE_LOOK[type][1], type, "")}
     ${segHtml(S.txTypes, type, 'data-f="type"')}
