@@ -1,11 +1,23 @@
-// Home OS จด: cache the page itself so it opens without signal. Calls to Supabase are never cached.
-const CACHE = "homeos-pwa-v9"; // bump on every deploy · v9: data in Supabase, sign in per person
-const SHELL = ["./", "index.html", "app.js", "app.css", "manifest.webmanifest", "icon-180.png", "icon-192.png", "logo-login.png", "vendor/supabase.js"];
-self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: "reload" }))))); self.skipWaiting(); });
-self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k))))); self.clients.claim(); });
-self.addEventListener("fetch", e => {
+// Home OS จด: keep the page and its files so it opens without signal. Calls to Supabase are never cached.
+// Every same-site GET goes to the network first (so a new build shows at once) and falls back to the last copy.
+const CACHE = "homeos-phone";
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (e) => {
+  // the version 1 caches (homeos-pwa-v*) are no use to version 2
+  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))));
+  self.clients.claim();
+});
+self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET" || new URL(e.request.url).origin !== location.origin) return;
-  // no-cache: check with GitHub every time (Pages lets browsers keep a file 10 minutes, so a new version showed up late)
-  e.respondWith(fetch(e.request.url, { cache: "no-cache" }).then(r => { const c = r.clone(); caches.open(CACHE).then(x => x.put(e.request, c)); return r; })
-    .catch(() => caches.match(e.request, { ignoreSearch: true })));
+  e.respondWith(
+    fetch(e.request, { cache: "no-cache" })
+      .then((r) => {
+        if (r.ok) {
+          const c = r.clone();
+          caches.open(CACHE).then((x) => x.put(e.request, c));
+        }
+        return r;
+      })
+      .catch(() => caches.match(e.request, { ignoreSearch: true }).then((r) => r || caches.match(self.registration.scope))),
+  );
 });

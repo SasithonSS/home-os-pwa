@@ -10,28 +10,16 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Home OS จด">
-<link rel="apple-touch-icon" href="icon-180.png">
-<link rel="icon" href="icon-192.png">
-<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="/home-os-pwa/icon-180.png">
+<link rel="icon" href="/home-os-pwa/icon-192.png">
+<link rel="manifest" href="/home-os-pwa/manifest.webmanifest">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Anuphan:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="app.css">
+  <script type="module" crossorigin src="/home-os-pwa/assets/index-wDOVj5rX.js"></script>
+  <link rel="stylesheet" crossorigin href="/home-os-pwa/assets/index-D1rNNoxl.css">
 </head>
 <body>
-<div id="app"></div>
-
-<nav class="bottomnav hidden" id="nav">
-  <div class="in">
-    <button class="tab" data-view="money" aria-selected="true"></button>
-    <button class="add" id="add" aria-label="จด"></button>
-    <button class="tab" data-view="home" aria-selected="false"></button>
-  </div>
-</nav>
-
+<div id="root"></div>
 <div id="sheet"></div>
-<div id="toast" class="toast" role="status"></div>
-
-<script src="vendor/supabase.js"></script>
-<script src="app.js"></script>
 </body>
 </html>
