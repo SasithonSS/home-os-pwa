@@ -21,3 +21,24 @@ self.addEventListener("fetch", (e) => {
       .catch(() => caches.match(e.request, { ignoreSearch: true }).then((r) => r || caches.match(self.registration.scope))),
   );
 });
+
+// the morning notification from supabase/notify.py: { title, body, url }
+self.addEventListener("push", (e) => {
+  let m = { title: "Home OS", body: "" };
+  try {
+    m = { ...m, ...e.data.json() };
+  } catch {
+    m.body = e.data ? e.data.text() : "";
+  }
+  e.waitUntil(self.registration.showNotification(m.title, { body: m.body, icon: "icon-192.png", badge: "icon-192.png", data: m.url || "./" }));
+});
+// tapping it opens the app (or brings it to the front) on the วันนี้ tab
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  e.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((cs) => {
+      for (const c of cs) if ("focus" in c) return c.focus();
+      return self.clients.openWindow(new URL(e.notification.data || "./", self.registration.scope).href);
+    }),
+  );
+});
