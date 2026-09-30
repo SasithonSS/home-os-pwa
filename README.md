@@ -5,4 +5,4 @@
 
 ติดตั้ง: Safari → เปิดหน้านี้ → Share → Add to Home Screen → เปิดจากไอคอน → เข้าสู่ระบบด้วยอีเมล + รหัสผ่าน
 
-Source: `pwa/` ใน repo home-os (private) · ฐานข้อมูล: `supabase/` (schema, ย้ายข้อมูลจาก Sheet, วิธีตั้งค่า)
+Source: `phone/` ใน repo home-os (private) · ไฟล์ในนี้คือผล build อย่าแก้ตรงนี้ · ฐานข้อมูล: `supabase/` (schema, ย้ายข้อมูลจาก Sheet, วิธีตั้งค่า)

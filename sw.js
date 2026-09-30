@@ -1,6 +1,19 @@
 // Home OS จด: keep the page and its files so it opens without signal. Calls to Supabase are never cached.
 // Every same-site GET goes to the network first (so a new build shows at once) and falls back to the last copy.
+// One copy of each file: a query (the update check's ?v=…, main.tsx) is left off the name it's kept under, and when the
+// page comes in, the scripts and styles of builds it no longer uses are dropped.
 const CACHE = "homeos-phone";
+const bare = (url) => url.split("#")[0].split("?")[0];
+const ASSET = /assets\/[\w.-]+/g;
+async function prune(page) {
+  const used = new Set((await page.text()).match(ASSET) || []);
+  if (!used.size) return; // not the app's page (an error page?): leave what's kept alone
+  const c = await caches.open(CACHE);
+  for (const k of await c.keys()) {
+    const a = k.url.match(ASSET);
+    if (k.url.includes("?") || (a && !used.has(a[0]))) await c.delete(k);
+  }
+}
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) => {
   // the version 1 caches (homeos-pwa-v*) are no use to version 2
@@ -14,7 +27,8 @@ self.addEventListener("fetch", (e) => {
       .then((r) => {
         if (r.ok) {
           const c = r.clone();
-          caches.open(CACHE).then((x) => x.put(e.request, c));
+          const page = bare(e.request.url) === self.registration.scope ? r.clone() : null;
+          e.waitUntil(caches.open(CACHE).then((x) => x.put(bare(e.request.url), c)).then(() => page && prune(page)));
         }
         return r;
       })
