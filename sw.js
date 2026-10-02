@@ -51,7 +51,11 @@ self.addEventListener("notificationclick", (e) => {
   e.notification.close();
   e.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((cs) => {
-      for (const c of cs) if ("focus" in c) return c.focus();
+      for (const c of cs)
+        if ("focus" in c) {
+          c.postMessage({ tab: "today" }); // an app already open goes to วันนี้ (App.tsx)
+          return c.focus();
+        }
       return self.clients.openWindow(new URL(e.notification.data || "./", self.registration.scope).href);
     }),
   );
