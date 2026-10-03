@@ -46,17 +46,19 @@ self.addEventListener("push", (e) => {
   }
   e.waitUntil(self.registration.showNotification(m.title, { body: m.body, icon: "icon-192.png", badge: "icon-192.png", data: m.url || "./" }));
 });
-// tapping it opens the app (or brings it to the front) on the วันนี้ tab
+// tapping it opens the app (or brings it to the front) on the วันนี้ tab, with แจ้งเตือน open: the whole message
 self.addEventListener("notificationclick", (e) => {
   e.notification.close();
   e.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((cs) => {
       for (const c of cs)
         if ("focus" in c) {
-          c.postMessage({ tab: "today" }); // an app already open goes to วันนี้ (App.tsx)
+          c.postMessage({ tab: "today", open: "notifs" }); // an app already open goes to วันนี้, the message open in full (App.tsx)
           return c.focus();
         }
-      return self.clients.openWindow(new URL(e.notification.data || "./", self.registration.scope).href);
+      const url = new URL(e.notification.data || "./", self.registration.scope);
+      url.searchParams.set("open", "notifs"); // the lock screen shows the first lines: the app, all of it
+      return self.clients.openWindow(url.href);
     }),
   );
 });
