@@ -53,11 +53,12 @@ self.addEventListener("notificationclick", (e) => {
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((cs) => {
       for (const c of cs)
         if ("focus" in c) {
-          c.postMessage({ tab: "today", open: "notifs" }); // an app already open goes to วันนี้, the message open in full (App.tsx)
+          // an app already open goes to วันนี้, the message open in full (App.tsx), or what the notification says to open
+          c.postMessage({ tab: "today", open: new URL(e.notification.data || "./", self.registration.scope).searchParams.get("open") || "notifs" });
           return c.focus();
         }
       const url = new URL(e.notification.data || "./", self.registration.scope);
-      url.searchParams.set("open", "notifs"); // the lock screen shows the first lines: the app, all of it
+      if (!url.searchParams.has("open")) url.searchParams.set("open", "notifs"); // the lock screen shows the first lines: the app, all of it
       return self.clients.openWindow(url.href);
     }),
   );
