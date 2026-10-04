@@ -38,7 +38,7 @@ self.addEventListener("fetch", (e) => {
 
 // the morning notification from supabase/notify.py: { title, body, url }
 self.addEventListener("push", (e) => {
-  let m = { title: "Home OS", body: "" };
+  let m = { title: "Homanage", body: "" };
   try {
     m = { ...m, ...e.data.json() };
   } catch {

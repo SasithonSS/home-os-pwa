@@ -1,6 +1,6 @@
 {
-  "name": "Home OS จด",
-  "short_name": "Home OS",
+  "name": "Homanage",
+  "short_name": "Homanage",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
