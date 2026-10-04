@@ -1,4 +1,4 @@
-// Home OS จด: keep the page and its files so it opens without signal. Calls to Supabase are never cached.
+// Homanage: keep the page and its files so it opens without signal. Calls to Supabase are never cached.
 // Every same-site GET goes to the network first (so a new build shows at once) and falls back to the last copy.
 // One copy of each file: a query (the update check's ?v=…, main.tsx) is left off the name it's kept under, and when the
 // page comes in, the scripts and styles of builds it no longer uses are dropped.
